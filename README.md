@@ -19,4 +19,15 @@ x: extract
 d: delete
 t/v: print a summary of the file. t for short version; v as vt in ar gives verbose version.
 
+Proj 3:word count/sort using folk/pipe subroutine
+Folk several process and use pipe to communicate:
+  a. take in a text from STDIN, find words, output to pipe b1 and b2 alternatively. Alphabet(A-Z,a-z) only, cap 30 char per word, each word a new line
+  b1./b2. take input from pipe from a. use /bin/sort to sort and output to pipe connecting to c.
+  c. merge and count each word from b1/b2. Output to STDOUT
+
+Proj 4:finding perfect number, multi-process, using shared memory/message queue/signal
+  manage.c  :create a shared memory segment, manage all compute instance, kill them properly when required. Only one instance of manage allowed.
+  compute.c :compute consecutive integers from given number if it is perfect. check shared memory and skip checked. store result in shared memory. multiple instance (up to 20) allowed.
+  report.c  :report the status and perfect number found. if use -k switch, kill manage and manage kill all computes.
+
 
