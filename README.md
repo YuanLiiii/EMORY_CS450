@@ -1,8 +1,11 @@
 # EMORY_CS450
+
 System programming / CS450 in Emory University
 
 All program written in C.
 Taught by Prof. Ken Mandelburg
+
+#WARNING:DO NOT COPY THE CODE AND SUBMIT AS YOUR OWN WORK! CONSULT YOUR HONOR CODE#
 
 Proj 1: Goldbach [using bitarray]
 Command line gives an int as upper limit. Finds primes up to the limit and store in bitarray. Then input an int and find goldbach decompositions [in = prime1 + prime2;prime1<=prime2]. Gives number of solutions and largest prime1.
