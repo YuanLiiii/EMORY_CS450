@@ -1,0 +1,1673 @@
+!<arch>
+myar.c~/        1477069854  21760 88    100644  11205     `
+/* THIS CODE IS MY OWN WORK, IT IS WRITTEN WITHOUT CONSULTING A TUTOR OR CODE WRITTEN BY OTHER STUDENT -YIYANG ZHAO*/
+// All option attempted: q A t v d x
+// Please use myar [option] [arname] {file_names[]}; do not put dash (-) before options
+// Ex: myar q t.ar file1 file2...    NOT myar -q ...
+
+/*include*/
+#include <stdlib.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <utime.h>
+#include <time.h>
+#include <ar.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <dirent.h>
+
+//function decs
+//#include <myarheader.h>
+void ar_list(int ar_fd, int verbosity);
+void ar_ext(int ar_fd, int argc, char **argv);
+void ar_app(int ar_fd, int argc, char **argv);
+void ar_appall(int ar_fd, int argc, char **argv);
+void ar_del(int ar_fd, int argc, char **argv);
+
+//main
+void print_usage()
+{
+		printf("Usage: myar key afile name...\n");
+		printf("q	quickly append named files to archive\n");
+		printf("x	extract named files\n");
+		printf("t	print a concise table of contents of the archive\n");
+		printf("v	print a verbose table of contents of the archive\n");
+		printf("d	delete named files from archive\n");
+		printf("A	quickly append all ordinary files in the current directory that have been modified within the last hour except the archive itself\n");
+}
+
+int main (int argc, char **argv)
+{
+	//myar key afile name
+	/*
+ 	q app [named]
+	x ext [named]
+	t prt(cons)
+	v prt(vbo)
+	d del [named]
+	A app all(mod'd)
+	*/
+	char option;
+	char* ar_filename;
+	char* op_filename;
+	int ar_fd;
+
+	//argument check
+	if (argc <= 2){
+		print_usage();
+		exit(1);
+	}
+	//passing arguments: option and ar file name	
+	option = argv[1][0];
+	ar_filename = argv[2];
+
+	if (!(option == 'q' | option == 'x'|option=='t'|option =='v'|option =='d'|option == 'A')){
+		print_usage();
+		exit(1);
+	}
+	//Open the ar file
+	
+	//test if arfile exist. yes->open no&&'q'|'A'->create otherwise quit
+	if ( access( ar_filename, F_OK ) != -1 ){
+		//open for use
+		ar_fd = open(ar_filename, O_RDWR);
+		char magic[8];
+		magic[8] = NULL;
+		read(ar_fd, magic, 8);
+		if(strcmp(magic, ARMAG) != 0){
+			printf("Error: File not recorgnized\n");
+			close(ar_fd);
+			exit(-1);
+		}
+	} else{
+
+		if (option =='q'||option == 'A'){
+			ar_fd = open(ar_filename, O_RDWR|O_CREAT, 0666);
+           		printf("Archive file not found; creating new archive file\n");
+			write(ar_fd, ARMAG, 8);
+			//create file
+		} else{
+			printf("Error: target archive file not exist\n");	
+			exit(-1);	
+		}
+
+	}
+
+	/* 
+	t,v -> ar_list(ar_fd, int 0(t)/1(v))
+	x -> ar_ext(ar_fd,argc,**argv)
+	q -> ar_app(ar_fd,argc,**argv)
+	A -> ar_appall(ar_fd,(cwd?)) -> ar_app
+	d -> ar_del(ar_fd,argc,**argv)
+	*/
+	switch(option){
+	
+		case('t'):
+			ar_list(ar_fd,0);
+			break;
+		case('v'):
+			ar_list(ar_fd,1);
+			break;
+		case('q'):
+			ar_app(ar_fd,argc,argv);
+			break;
+		case('x'):
+			ar_ext(ar_fd,argc,argv);
+			break;
+		case('A'):
+			ar_appall(ar_fd,argc,argv);
+			break;
+
+		case('d'):
+			ar_del(ar_fd,argc,argv);
+			break;
+		default:
+			exit(-1);
+	}
+
+}
+
+
+void ar_list(int ar_fd, int verbosity){
+	//DONE
+	struct ar_hdr * file_header = malloc(sizeof(struct ar_hdr));
+	
+	while (read(ar_fd, file_header, sizeof(struct ar_hdr)) == sizeof(struct ar_hdr)) {
+		//printf("readaaa\n");		
+		int i;
+		int filesize = (int)strtol(file_header->ar_size,NULL,10);		
+		for (i=15;i>0;i--){
+			//printf("%d\n",i);
+			if (file_header->ar_name[i] == '/'){
+				file_header->ar_name[i] = NULL;
+				break;
+			}
+		}	
+	
+		if (!(verbosity)){
+			printf("%s\n",file_header->ar_name);
+		}else{
+
+			//DONE
+			// 3*3mode uid/gid   size timestamp[Oct 13 19:35 2016] filename
+			int j;
+			//mode			
+			for (j=3;j<6;j++){
+				int per = file_header->ar_mode[j] - '0';
+				int perx = per % 2;
+				per = per/2;
+				int perw = per % 2;
+				per = per/2;
+				int perr = per % 2;
+				if (perr) printf("r"); else printf("-");
+				if (perw) printf("w"); else printf("-");
+				if (perx) printf("x"); else printf("-");
+			}
+			//printf(" ");
+
+			//uid/gid
+			int uid = atoi(file_header->ar_uid);
+			int gid = atoi(file_header->ar_gid);
+			printf("%6d/%-6d ",uid, gid);
+			printf("%d", filesize);
+			time_t mtimestamp;	 
+			mtimestamp = strtol(file_header->ar_date,NULL,10);
+			char* printtime[20];
+			strftime(printtime, 20, " %b %e %R %Y", localtime(&mtimestamp));
+			printf("%-20s", printtime);
+			printf("%-16s\n",file_header->ar_name);
+		}	
+		char *something_weird;	
+		
+		//printf("%d\n", filesize);
+		if (filesize%2) filesize++;
+		lseek(ar_fd,filesize,SEEK_CUR);
+
+
+		
+	}
+
+	close(ar_fd);
+}
+
+
+void ar_ext(int ar_fd, int argc, char **argv){
+	//TODO
+
+	int i;
+	struct ar_hdr * file_header = malloc(sizeof(struct ar_hdr));
+	printf("%d\n",argc);
+	for (i=3;i<argc;i++){
+		printf("finding %s\n",argv[i]);
+		//find named file
+		int filesize;
+		int flag = 0;
+		while (read(ar_fd, file_header, sizeof(struct ar_hdr)) == sizeof(struct ar_hdr)){
+			int j;			
+			for (j = 16; j >=0; j--){
+            			if (file_header->ar_name[j] == '/') {
+               				file_header->ar_name[j] = '\0';
+                 			
+					break;
+           		 	}
+      		 	}
+			filesize = (int)strtol(file_header->ar_size,NULL,10);
+			
+			if ((strcmp(file_header->ar_name, argv[i]) != 0)){
+				//skip
+				if (filesize%2) filesize++;
+				lseek(ar_fd,filesize,SEEK_CUR);
+				printf("going thru:%s\n",file_header->ar_name);
+		
+			} else{
+				//break
+				flag = 1;
+				printf("found %s\n",file_header->ar_name);
+				break;
+			}
+		}
+	
+		if (flag == 0) {
+			printf("Error: file to extract not found.\n");
+			exit(-1);
+		}
+		//create a file	
+		struct utimbuf *file_utime = malloc(sizeof(struct utimbuf));
+   	 	int *file_mode;
+   		time_t file_time;
+		
+		sscanf(file_header->ar_mode, "%o", file_mode);
+		file_time = (time_t)strtol(file_header->ar_date,NULL,10);
+		file_utime->actime = file_time;
+		file_utime->modtime = file_time;
+		//extract its content write using buffer
+		printf("%s\n %o\n",file_header->ar_mode,*file_mode);
+		int extf_fd = creat(file_header->ar_name,  *file_mode);
+
+			
+		struct stat *f_stat = malloc(sizeof(struct stat));
+		fstat(extf_fd, f_stat);
+		
+
+		int f_blocks = (int)f_stat->st_blocks;
+		char* f_buffer[f_blocks];
+		int remaining_size = filesize;
+		int actual_size;
+
+		while(remaining_size > f_blocks){
+			actual_size = read(ar_fd,f_buffer,f_blocks);
+			write(extf_fd,f_buffer,actual_size);
+			remaining_size -= actual_size;
+		}
+		actual_size = read(ar_fd,f_buffer,remaining_size);
+		write(extf_fd,f_buffer,actual_size);
+
+		
+		close(extf_fd);
+		//change time ?
+		utime(file_header->ar_name,file_utime);
+		
+		//lseek to the head?
+		lseek(ar_fd,0,8);
+	}
+	close(ar_fd);
+}
+
+void ar_app(int ar_fd, int argc, char **argv){
+	//DONE
+	//passing in all argument as the main method because we want the list of file names
+	//printf("%s\n",argv[3]);
+	int file_num = argc - 3;
+	int i;
+	char* f_name;
+	lseek(ar_fd,0,SEEK_END);	
+	for (i=3;i<argc;i++){
+		
+		f_name = argv[i];
+		//printf("%s\n",f_name);
+		int target_fd;
+		struct ar_hdr *f_hdr = malloc(sizeof(struct ar_hdr));
+		struct stat *f_stat = malloc(sizeof(struct stat));
+		target_fd = open(f_name, O_RDONLY); //the file to be appended
+		
+		if (target_fd == -1){
+			printf("Error: Target file to append not found\n");
+			close(target_fd);
+			close(ar_fd);
+			exit(-1);
+		}
+		//get metadata of the file 
+		fstat(target_fd, f_stat);
+		int f_blksz = (int)f_stat->st_blksize;
+
+		char namestr[strlen(f_name)+1];
+		strcpy (namestr,f_name);		
+		strcat(namestr, "/");
+		
+		/*
+		name 16
+		date 12
+		uid 6
+		gid 6
+		mode 8
+		size 10
+		famg 2
+		
+		*/
+		sprintf(f_hdr->ar_name, "%-16s", namestr);
+		sprintf(f_hdr->ar_date,"%-12d",(int)f_stat->st_mtime);
+		sprintf(f_hdr->ar_uid,"%-6d", (int)f_stat->st_uid);
+		sprintf(f_hdr->ar_gid,"%-6d", (int)f_stat->st_gid);
+		
+		sprintf(f_hdr->ar_mode,"%-8o",f_stat->st_mode);
+		sprintf(f_hdr->ar_size,"%-10d",(int)f_stat->st_size);
+		sprintf(f_hdr->ar_fmag,"%-2s",ARFMAG);	
+		//printf("%s\n",f_hdr);
+		write(ar_fd,f_hdr,sizeof(struct ar_hdr));
+		
+		//copy the content of the file
+		int f_blocks = (int)f_stat->st_blocks;
+		char* f_buffer[f_blocks];
+		int actual_size;
+		while(actual_size = read(target_fd,f_buffer,f_blocks)){
+			
+			write(ar_fd,f_buffer,actual_size);
+
+		}
+		
+		if ((lseek(ar_fd,0,SEEK_END)%2)){
+			write(ar_fd,"\n",1);
+		}
+		
+		close(target_fd);
+
+	}
+	close(ar_fd);
+	exit(0);
+
+}
+
+void ar_appall(int ar_fd, int argc, char **argv){
+	//TODO- DONE but need to check
+	//artificially generate a list as argv and argc then pass into ar_app :)
+	//check current dir, add all file mod in 1h except argv[0] to new_argv
+	int count = 0;
+	
+	DIR *dp;
+	dp = opendir("./");
+	struct dirent *ep;
+	char* new_argv[10000];
+	new_argv[0] = argv[0];
+	new_argv[1] = "q";
+	new_argv[2] = argv[2];
+	int new_argc = 2;
+	
+	while (ep = readdir(dp) != NULL){
+		if ((ep->d_type == DT_REG) && (strcmp(ep->d_name, argv[2]) != 0)){
+			char* filename = ep->d_name;
+			struct stat *f_stat = malloc(sizeof(struct stat));
+			stat(filename,f_stat);
+			//printf("%s\n",filename);
+			//printf("%f\n",difftime(time(NULL), f_stat->st_mtime));
+			if  ( difftime(time(NULL), f_stat->st_mtime)<=3600){
+				new_argc ++;
+				new_argv[new_argc] = filename;
+				
+
+			}
+		}
+		
+
+	}
+	ar_app(ar_fd,new_argc,new_argv);
+
+	
+
+}
+
+void ar_del(int ar_fd, int argc, char **argv){
+	//TODO
+	//read through the ar file
+	//maintain a list of file 2b deleted
+	//if (inlist){skip;inlist.rm()file;} else {read and write}	
+
+	char* to_del[argc - 3];
+	int num_to_del = argc - 3;
+	int i;
+	struct stat *f_stat = malloc(sizeof(struct stat));
+	for (i=0; i<argc-3;i++){
+		to_del[i] = argv[i+3];
+	}
+	//creat a new file
+	unlink(argv[2]);
+	int new_ar_fd= open(argv[2],O_RDWR|O_CREAT,0666);
+	write(new_ar_fd, ARMAG, 8);
+	fstat(new_ar_fd, f_stat);
+	int f_blocks = (int)f_stat->st_blocks;
+
+	//each time read a header and go thru the del_list
+	struct ar_hdr * file_header = malloc(sizeof(struct ar_hdr));
+
+	while(read(ar_fd, file_header, sizeof(struct ar_hdr)) == sizeof(struct ar_hdr)){
+		//if inlist?
+		
+		char *filename = malloc(20);
+		sprintf(filename, "%-16s", file_header->ar_name);		
+		int j;
+		
+		for (j=16;j>=0;j--){
+			if (filename[j] == '/'){
+				filename[j] = '\0';
+				break;
+			}
+
+		}
+		//printf("Searching %s\n",filename);
+		int flag = 0;
+		for (j=0;j<argc-3;j++){
+			//printf("against %s\n",to_del[j]);			
+			if ((strcmp(filename, to_del[j]) == 0)){
+				
+				flag = 1;			
+				to_del[j] = "\n";
+				break;
+
+			}
+		}
+		
+		int filesize = (int)strtol(file_header->ar_size,NULL,10);
+		if (flag == 0){
+			//write
+
+
+
+			write(new_ar_fd,file_header,sizeof(struct ar_hdr));
+			
+			//copy the content of the file
+
+			char* f_buffer[f_blocks];
+			int remaining_size = filesize;
+			int actual_size;
+
+			while(remaining_size > f_blocks){
+				actual_size = read(ar_fd,f_buffer,f_blocks);
+				write(new_ar_fd,f_buffer,actual_size);
+				remaining_size -= actual_size;
+			}
+			actual_size = read(ar_fd,f_buffer,remaining_size);
+			write(new_ar_fd,f_buffer,actual_size);
+		
+			if ((lseek(new_ar_fd,0,SEEK_CUR)%2)){
+				write(new_ar_fd,"\n",1);
+			}
+
+			if ((lseek(ar_fd,0,SEEK_CUR)%2)){
+				lseek(ar_fd,1,SEEK_CUR);
+			}
+
+		} else {
+			//skip
+			
+			if (filesize%2) filesize++;
+			lseek(ar_fd,filesize,SEEK_CUR);
+			printf("going thru:%s\n",file_header->ar_name);
+			
+		}
+
+	}
+
+	close(ar_fd);
+	close(new_ar_fd);
+	exit(0);
+}
+
+
+#myar.c#/       1477069719  21760 88    100644  11198     `
+/* THIS CODE IS MY OWN WORK, IT IS WRITTEN WITHOUT CONSULTING A TUTOR OR CODE WRITTEN BY OTHER STUDENT -YIYANG ZHAO*/
+// All option attempted: q A t v d x
+// Please use myar [option] [arname] {file_names[]}; do not put dash (-) before options
+// Ex: myar q t.ar file1 file2...    NOT myar -q ...
+
+/*include*/
+#include <stdlib.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <utime.h>
+#include <time.h>
+#include <ar.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <dirent.h>
+
+//function decs
+//#include <myarheader.h>
+void ar_list(int ar_fd, int verbosity);
+void ar_ext(int ar_fd, int argc, char **argv);
+void ar_app(int ar_fd, int argc, char **argv);
+void ar_appall(int ar_fd, int argc, char **argv);
+void ar_del(int ar_fd, int argc, char **argv);
+
+//main
+void print_usage()
+{
+		printf("Usage: myar key afile name...\n");
+		printf("q	quickly append named files to archive\n");
+		printf("x	extract named files\n");
+		printf("t	print a concise table of contents of the archive\n");
+		printf("v	print a verbose table of contents of the archive\n");
+		printf("d	delete named files from archive\n");
+		printf("A	quickly append all ordinary files in the current directory that have been modified within the last hour except the archive itself\n");
+}
+
+int main (int argc, char **argv)
+{
+	//myar key afile name
+	/*
+ 	q app [named]
+	x ext [named]
+	t prt(cons)
+	v prt(vbo)
+	d del [named]
+	A app all(mod'd)
+	*/
+	char option;
+	char* ar_filename;
+	char* op_filename;
+	int ar_fd;
+
+	//argument check
+	if (argc <= 2){
+		print_usage();
+		exit(1);
+	}
+	//passing arguments: option and ar file name	
+	option = argv[1][0];
+	ar_filename = argv[2];
+
+	if (!(option == 'q' | option == 'x'|option=='t'|option =='v'|option =='d'|option == 'A')){
+		print_usage();
+		exit(1);
+	}
+	//Open the ar file
+	
+	//test if arfile exist. yes->open no&&'q'|'A'->create otherwise quit
+	if ( access( ar_filename, F_OK ) != -1 ){
+		//open for use
+		ar_fd = open(ar_filename, O_RDWR);
+		char magic[8];
+		magic[8] = NULL;
+		read(ar_fd, magic, 8);
+		if(strcmp(magic, ARMAG) != 0){
+			printf("Error: File not recorgnized\n");
+			close(ar_fd);
+			exit(-1);
+		}
+	} else{
+
+		if (option =='q'||option == 'A'){
+			ar_fd = open(ar_filename, O_RDWR|O_CREAT, 0666);
+           		printf("Archive file not found; creating new archive file\n");
+			write(ar_fd, ARMAG, 8);
+			//create file
+		} else{
+			printf("Error: target archive file not exist\n");	
+			exit(-1);	
+		}
+
+	}
+
+	/* 
+	t,v -> ar_list(ar_fd, int 0(t)/1(v))
+	x -> ar_ext(ar_fd,argc,**argv)
+	q -> ar_app(ar_fd,argc,**argv)
+	A -> ar_appall(ar_fd,(cwd?)) -> ar_app
+	d -> ar_del(ar_fd,argc,**argv)
+	*/
+	switch(option){
+	
+		case('t'):
+			ar_list(ar_fd,0);
+			break;
+		case('v'):
+			ar_list(ar_fd,1);
+			break;
+		case('q'):
+			ar_app(ar_fd,argc,argv);
+			break;
+		case('x'):
+			ar_ext(ar_fd,argc,argv);
+			break;
+		case('A'):
+			ar_appall(ar_fd,argc,argv);
+			break;
+
+		case('d'):
+			ar_del(ar_fd,argc,argv);
+			break;
+		default:
+			exit(-1);
+	}
+
+}
+
+
+void ar_list(int ar_fd, int verbosity){
+	//DONE
+	struct ar_hdr * file_header = malloc(sizeof(struct ar_hdr));
+	
+	while (read(ar_fd, file_header, sizeof(struct ar_hdr)) == sizeof(struct ar_hdr)) {
+		//printf("readaaa\n");		
+		int i;
+		int filesize = (int)strtol(file_header->ar_size,NULL,10);		
+		for (i=15;i>0;i--){
+			//printf("%d\n",i);
+			if (file_header->ar_name[i] == '/'){
+				file_header->ar_name[i] = NULL;
+				break;
+			}
+		}	
+	
+		if (!(verbosity)){
+			printf("%s\n",file_header->ar_name);
+		}else{
+
+			//DONE
+			// 3*3mode uid/gid   size timestamp[Oct 13 19:35 2016] filename
+			int j;
+			//mode			
+			for (j=3;j<6;j++){
+				int per = file_header->ar_mode[j] - '0';
+				int perx = per % 2;
+				per = per/2;
+				int perw = per % 2;
+				per = per/2;
+				int perr = per % 2;
+				if (perr) printf("r"); else printf("-");
+				if (perw) printf("w"); else printf("-");
+				if (perx) printf("x"); else printf("-");
+			}
+			//printf(" ");
+
+			//uid/gid
+			int uid = atoi(file_header->ar_uid);
+			int gid = atoi(file_header->ar_gid);
+			printf("%6d/%-6d ",uid, gid);
+			printf("%d", filesize);
+			time_t mtimestamp;	 
+			mtimestamp = strtol(file_header->ar_date,NULL,10);
+			char* printtime[20];
+			strftime(printtime, 20, " %b %e %R %Y", localtime(&mtimestamp));
+			printf("%-20s", printtime);
+			printf("%-16s\n",file_header->ar_name);
+		}	
+		char *something_weird;	
+		
+		//printf("%d\n", filesize);
+		if (filesize%2) filesize++;
+		lseek(ar_fd,filesize,SEEK_CUR);
+
+
+		
+	}
+
+	close(ar_fd);
+}
+
+
+void ar_ext(int ar_fd, int argc, char **argv){
+	//TODO
+
+	int i;
+	struct ar_hdr * file_header = malloc(sizeof(struct ar_hdr));
+	printf("%d\n",argc);
+	for (i=3;i<argc;i++){
+		printf("finding %s\n",argv[i]);
+		//find named file
+		int filesize;
+		int flag = 0;
+		while (read(ar_fd, file_header, sizeof(struct ar_hdr)) == sizeof(struct ar_hdr)){
+			int j;			
+			for (j = 16; j >=0; j--){
+            			if (file_header->ar_name[j] == '/') {
+               				file_header->ar_name[j] = '\0';
+                 			
+					break;
+           		 	}
+      		 	}
+			filesize = (int)strtol(file_header->ar_size,NULL,10);
+			
+			if ((strcmp(file_header->ar_name, argv[i]) != 0)){
+				//skip
+				if (filesize%2) filesize++;
+				lseek(ar_fd,filesize,SEEK_CUR);
+				printf("going thru:%s\n",file_header->ar_name);
+		
+			} else{
+				//break
+				flag = 1;
+				printf("found %s\n",file_header->ar_name);
+				break;
+			}
+		}
+	
+		if (flag == 0) {
+			printf("Error: file to extract not found.\n");
+			exit(-1);
+		}
+		//create a file	
+		struct utimbuf *file_utime = malloc(sizeof(struct utimbuf));
+   	 	int *file_mode;
+   		time_t file_time;
+		
+		sscanf(file_header->ar_mode, "%o", file_mode);
+		file_time = (time_t)strtol(file_header->ar_date,NULL,10);
+		file_utime->actime = file_time;
+		file_utime->modtime = file_time;
+		//extract its content write using buffer
+		printf("%s\n %o\n",file_header->ar_mode,*file_mode);
+		int extf_fd = creat(file_header->ar_name,  *file_mode);
+
+			
+		struct stat *f_stat = malloc(sizeof(struct stat));
+		fstat(extf_fd, f_stat);
+		
+
+		int f_blocks = (int)f_stat->st_blocks;
+		char* f_buffer[f_blocks];
+		int remaining_size = filesize;
+		int actual_size;
+
+		while(remaining_size > f_blocks){
+			actual_size = read(ar_fd,f_buffer,f_blocks);
+			write(extf_fd,f_buffer,actual_size);
+			remaining_size -= actual_size;
+		}
+		actual_size = read(ar_fd,f_buffer,remaining_size);
+		write(extf_fd,f_buffer,actual_size);
+
+		
+		close(extf_fd);
+		//change time ?
+		utime(file_header->ar_name,file_utime);
+		
+		//lseek to the head?
+		lseek(ar_fd,0,8);
+	}
+	close(ar_fd);
+}
+
+void ar_app(int ar_fd, int argc, char **argv){
+	//DONE
+	//passing in all argument as the main method because we want the list of file names
+	//printf("%s\n",argv[3]);
+	int file_num = argc - 3;
+	int i;
+	char* f_name;
+	lseek(ar_fd,0,SEEK_END);	
+	for (i=3;i<argc;i++){
+		
+		f_name = argv[i];
+		//printf("%s\n",f_name);
+		int target_fd;
+		struct ar_hdr *f_hdr = malloc(sizeof(struct ar_hdr));
+		struct stat *f_stat = malloc(sizeof(struct stat));
+		target_fd = open(f_name, O_RDONLY); //the file to be appended
+		
+		if (target_fd == -1){
+			printf("Error: Target file to append not found\n");
+			close(target_fd);
+			close(ar_fd);
+			exit(-1);
+		}
+		//get metadata of the file 
+		fstat(target_fd, f_stat);
+		int f_blksz = (int)f_stat->st_blksize;
+
+		char namestr[strlen(f_name)+1];
+		strcpy (namestr,f_name);		
+		strcat(namestr, "/");
+		
+		/*
+		name 16
+		date 12
+		uid 6
+		gid 6
+		mode 8
+		size 10
+		famg 2
+		
+		*/
+		sprintf(f_hdr->ar_name, "%-16s", namestr);
+		sprintf(f_hdr->ar_date,"%-12d",(int)f_stat->st_mtime);
+		sprintf(f_hdr->ar_uid,"%-6d", (int)f_stat->st_uid);
+		sprintf(f_hdr->ar_gid,"%-6d", (int)f_stat->st_gid);
+		
+		sprintf(f_hdr->ar_mode,"%-8o",f_stat->st_mode);
+		sprintf(f_hdr->ar_size,"%-10d",(int)f_stat->st_size);
+		sprintf(f_hdr->ar_fmag,"%-2s",ARFMAG);	
+		//printf("%s\n",f_hdr);
+		write(ar_fd,f_hdr,sizeof(struct ar_hdr));
+		
+		//copy the content of the file
+		int f_blocks = (int)f_stat->st_blocks;
+		char* f_buffer[f_blocks];
+		int actual_size;
+		while(actual_size = read(target_fd,f_buffer,f_blocks)){
+			
+			write(ar_fd,f_buffer,actual_size);
+
+		}
+		
+		if ((lseek(ar_fd,0,SEEK_END)%2)){
+			write(ar_fd,"\n",1);
+		}
+		
+		close(target_fd);
+
+	}
+	close(ar_fd);
+	exit(0);
+
+}
+
+void ar_appall(int ar_fd, int argc, char **argv){
+	//TODO- DONE but need to check
+	//artificially generate a list as argv and argc then pass into ar_app :)
+	//check current dir, add all file mod in 1h except argv[0] to new_argv
+	int count = 0;
+	
+	DIR *dp;
+	dp = opendir("./");
+	struct dirent *ep;
+	char* new_argv[10000];
+	new_argv[0] = argv[0];
+	new_argv[1] = "q";
+	new_argv[2] = argv[2];
+	int new_argc = 2;
+	
+	while (ep = readdir(dp)){
+		if ((ep->d_type == DT_REG) && (strcmp(ep->d_name, argv[2]) != 0)){
+			char* filename = ep->d_name;
+			struct stat *f_stat = malloc(sizeof(struct stat));
+			stat(filename,f_stat);
+			//printf("%s\n",filename);
+			//printf("%f\n",difftime(time(NULL), f_stat->st_mtime));
+			if  ( difftime(time(NULL), f_stat->st_mtime)<=3600){
+				new_argc ++;
+				new_argv[new_argc] = filename;
+				
+
+			}
+		}
+		
+
+	}
+
+	ar_app(ar_fd,new_argc,new_argv);
+
+	
+
+}
+
+void ar_del(int ar_fd, int argc, char **argv){
+	//TODO
+	//read through the ar file
+	//maintain a list of file 2b deleted
+	//if (inlist){skip;inlist.rm()file;} else {read and write}	
+
+	char* to_del[argc - 3];
+	int num_to_del = argc - 3;
+	int i;
+	struct stat *f_stat = malloc(sizeof(struct stat));
+	for (i=0; i<argc-3;i++){
+		to_del[i] = argv[i+3];
+	}
+	//creat a new file
+	unlink(argv[2]);
+	int new_ar_fd= open(argv[2],O_RDWR|O_CREAT,0666);
+	write(new_ar_fd, ARMAG, 8);
+	fstat(new_ar_fd, f_stat);
+	int f_blocks = (int)f_stat->st_blocks;
+
+	//each time read a header and go thru the del_list
+	struct ar_hdr * file_header = malloc(sizeof(struct ar_hdr));
+
+	while(read(ar_fd, file_header, sizeof(struct ar_hdr)) == sizeof(struct ar_hdr)){
+		//if inlist?
+		
+		char *filename = malloc(20);
+		sprintf(filename, "%-16s", file_header->ar_name);		
+		int j;
+		
+		for (j=16;j>=0;j--){
+			if (filename[j] == '/'){
+				filename[j] = '\0';
+				break;
+			}
+
+		}
+		//printf("Searching %s\n",filename);
+		int flag = 0;
+		for (j=0;j<argc-3;j++){
+			//printf("against %s\n",to_del[j]);			
+			if ((strcmp(filename, to_del[j]) == 0)){
+				
+				flag = 1;			
+				to_del[j] = "\n";
+				break;
+
+			}
+		}
+		
+		int filesize = (int)strtol(file_header->ar_size,NULL,10);
+		if (flag == 0){
+			//write
+
+
+
+			write(new_ar_fd,file_header,sizeof(struct ar_hdr));
+			
+			//copy the content of the file
+
+			char* f_buffer[f_blocks];
+			int remaining_size = filesize;
+			int actual_size;
+
+			while(remaining_size > f_blocks){
+				actual_size = read(ar_fd,f_buffer,f_blocks);
+				write(new_ar_fd,f_buffer,actual_size);
+				remaining_size -= actual_size;
+			}
+			actual_size = read(ar_fd,f_buffer,remaining_size);
+			write(new_ar_fd,f_buffer,actual_size);
+		
+			if ((lseek(new_ar_fd,0,SEEK_CUR)%2)){
+				write(new_ar_fd,"\n",1);
+			}
+
+			if ((lseek(ar_fd,0,SEEK_CUR)%2)){
+				lseek(ar_fd,1,SEEK_CUR);
+			}
+
+		} else {
+			//skip
+			
+			if (filesize%2) filesize++;
+			lseek(ar_fd,filesize,SEEK_CUR);
+			printf("going thru:%s\n",file_header->ar_name);
+			
+		}
+
+	}
+
+	close(ar_fd);
+	close(new_ar_fd);
+	exit(0);
+}
+
+myar.c/         1477069906  21760 88    100644  11198     `
+/* THIS CODE IS MY OWN WORK, IT IS WRITTEN WITHOUT CONSULTING A TUTOR OR CODE WRITTEN BY OTHER STUDENT -YIYANG ZHAO*/
+// All option attempted: q A t v d x
+// Please use myar [option] [arname] {file_names[]}; do not put dash (-) before options
+// Ex: myar q t.ar file1 file2...    NOT myar -q ...
+
+/*include*/
+#include <stdlib.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <utime.h>
+#include <time.h>
+#include <ar.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <dirent.h>
+
+//function decs
+//#include <myarheader.h>
+void ar_list(int ar_fd, int verbosity);
+void ar_ext(int ar_fd, int argc, char **argv);
+void ar_app(int ar_fd, int argc, char **argv);
+void ar_appall(int ar_fd, int argc, char **argv);
+void ar_del(int ar_fd, int argc, char **argv);
+
+//main
+void print_usage()
+{
+		printf("Usage: myar key afile name...\n");
+		printf("q	quickly append named files to archive\n");
+		printf("x	extract named files\n");
+		printf("t	print a concise table of contents of the archive\n");
+		printf("v	print a verbose table of contents of the archive\n");
+		printf("d	delete named files from archive\n");
+		printf("A	quickly append all ordinary files in the current directory that have been modified within the last hour except the archive itself\n");
+}
+
+int main (int argc, char **argv)
+{
+	//myar key afile name
+	/*
+ 	q app [named]
+	x ext [named]
+	t prt(cons)
+	v prt(vbo)
+	d del [named]
+	A app all(mod'd)
+	*/
+	char option;
+	char* ar_filename;
+	char* op_filename;
+	int ar_fd;
+
+	//argument check
+	if (argc <= 2){
+		print_usage();
+		exit(1);
+	}
+	//passing arguments: option and ar file name	
+	option = argv[1][0];
+	ar_filename = argv[2];
+
+	if (!(option == 'q' | option == 'x'|option=='t'|option =='v'|option =='d'|option == 'A')){
+		print_usage();
+		exit(1);
+	}
+	//Open the ar file
+	
+	//test if arfile exist. yes->open no&&'q'|'A'->create otherwise quit
+	if ( access( ar_filename, F_OK ) != -1 ){
+		//open for use
+		ar_fd = open(ar_filename, O_RDWR);
+		char magic[8];
+		magic[8] = NULL;
+		read(ar_fd, magic, 8);
+		if(strcmp(magic, ARMAG) != 0){
+			printf("Error: File not recorgnized\n");
+			close(ar_fd);
+			exit(-1);
+		}
+	} else{
+
+		if (option =='q'||option == 'A'){
+			ar_fd = open(ar_filename, O_RDWR|O_CREAT, 0666);
+           		printf("Archive file not found; creating new archive file\n");
+			write(ar_fd, ARMAG, 8);
+			//create file
+		} else{
+			printf("Error: target archive file not exist\n");	
+			exit(-1);	
+		}
+
+	}
+
+	/* 
+	t,v -> ar_list(ar_fd, int 0(t)/1(v))
+	x -> ar_ext(ar_fd,argc,**argv)
+	q -> ar_app(ar_fd,argc,**argv)
+	A -> ar_appall(ar_fd,(cwd?)) -> ar_app
+	d -> ar_del(ar_fd,argc,**argv)
+	*/
+	switch(option){
+	
+		case('t'):
+			ar_list(ar_fd,0);
+			break;
+		case('v'):
+			ar_list(ar_fd,1);
+			break;
+		case('q'):
+			ar_app(ar_fd,argc,argv);
+			break;
+		case('x'):
+			ar_ext(ar_fd,argc,argv);
+			break;
+		case('A'):
+			ar_appall(ar_fd,argc,argv);
+			break;
+
+		case('d'):
+			ar_del(ar_fd,argc,argv);
+			break;
+		default:
+			exit(-1);
+	}
+
+}
+
+
+void ar_list(int ar_fd, int verbosity){
+	//DONE
+	struct ar_hdr * file_header = malloc(sizeof(struct ar_hdr));
+	
+	while (read(ar_fd, file_header, sizeof(struct ar_hdr)) == sizeof(struct ar_hdr)) {
+		//printf("readaaa\n");		
+		int i;
+		int filesize = (int)strtol(file_header->ar_size,NULL,10);		
+		for (i=15;i>0;i--){
+			//printf("%d\n",i);
+			if (file_header->ar_name[i] == '/'){
+				file_header->ar_name[i] = NULL;
+				break;
+			}
+		}	
+	
+		if (!(verbosity)){
+			printf("%s\n",file_header->ar_name);
+		}else{
+
+			//DONE
+			// 3*3mode uid/gid   size timestamp[Oct 13 19:35 2016] filename
+			int j;
+			//mode			
+			for (j=3;j<6;j++){
+				int per = file_header->ar_mode[j] - '0';
+				int perx = per % 2;
+				per = per/2;
+				int perw = per % 2;
+				per = per/2;
+				int perr = per % 2;
+				if (perr) printf("r"); else printf("-");
+				if (perw) printf("w"); else printf("-");
+				if (perx) printf("x"); else printf("-");
+			}
+			//printf(" ");
+
+			//uid/gid
+			int uid = atoi(file_header->ar_uid);
+			int gid = atoi(file_header->ar_gid);
+			printf("%6d/%-6d ",uid, gid);
+			printf("%d", filesize);
+			time_t mtimestamp;	 
+			mtimestamp = strtol(file_header->ar_date,NULL,10);
+			char* printtime[20];
+			strftime(printtime, 20, " %b %e %R %Y", localtime(&mtimestamp));
+			printf("%-20s", printtime);
+			printf("%-16s\n",file_header->ar_name);
+		}	
+		char *something_weird;	
+		
+		//printf("%d\n", filesize);
+		if (filesize%2) filesize++;
+		lseek(ar_fd,filesize,SEEK_CUR);
+
+
+		
+	}
+
+	close(ar_fd);
+}
+
+
+void ar_ext(int ar_fd, int argc, char **argv){
+	//TODO
+
+	int i;
+	struct ar_hdr * file_header = malloc(sizeof(struct ar_hdr));
+	printf("%d\n",argc);
+	for (i=3;i<argc;i++){
+		printf("finding %s\n",argv[i]);
+		//find named file
+		int filesize;
+		int flag = 0;
+		while (read(ar_fd, file_header, sizeof(struct ar_hdr)) == sizeof(struct ar_hdr)){
+			int j;			
+			for (j = 16; j >=0; j--){
+            			if (file_header->ar_name[j] == '/') {
+               				file_header->ar_name[j] = '\0';
+                 			
+					break;
+           		 	}
+      		 	}
+			filesize = (int)strtol(file_header->ar_size,NULL,10);
+			
+			if ((strcmp(file_header->ar_name, argv[i]) != 0)){
+				//skip
+				if (filesize%2) filesize++;
+				lseek(ar_fd,filesize,SEEK_CUR);
+				printf("going thru:%s\n",file_header->ar_name);
+		
+			} else{
+				//break
+				flag = 1;
+				printf("found %s\n",file_header->ar_name);
+				break;
+			}
+		}
+	
+		if (flag == 0) {
+			printf("Error: file to extract not found.\n");
+			exit(-1);
+		}
+		//create a file	
+		struct utimbuf *file_utime = malloc(sizeof(struct utimbuf));
+   	 	int *file_mode;
+   		time_t file_time;
+		
+		sscanf(file_header->ar_mode, "%o", file_mode);
+		file_time = (time_t)strtol(file_header->ar_date,NULL,10);
+		file_utime->actime = file_time;
+		file_utime->modtime = file_time;
+		//extract its content write using buffer
+		printf("%s\n %o\n",file_header->ar_mode,*file_mode);
+		int extf_fd = creat(file_header->ar_name,  *file_mode);
+
+			
+		struct stat *f_stat = malloc(sizeof(struct stat));
+		fstat(extf_fd, f_stat);
+		
+
+		int f_blocks = (int)f_stat->st_blocks;
+		char* f_buffer[f_blocks];
+		int remaining_size = filesize;
+		int actual_size;
+
+		while(remaining_size > f_blocks){
+			actual_size = read(ar_fd,f_buffer,f_blocks);
+			write(extf_fd,f_buffer,actual_size);
+			remaining_size -= actual_size;
+		}
+		actual_size = read(ar_fd,f_buffer,remaining_size);
+		write(extf_fd,f_buffer,actual_size);
+
+		
+		close(extf_fd);
+		//change time ?
+		utime(file_header->ar_name,file_utime);
+		
+		//lseek to the head?
+		lseek(ar_fd,0,8);
+	}
+	close(ar_fd);
+}
+
+void ar_app(int ar_fd, int argc, char **argv){
+	//DONE
+	//passing in all argument as the main method because we want the list of file names
+	//printf("%s\n",argv[3]);
+	int file_num = argc - 3;
+	int i;
+	char* f_name;
+	lseek(ar_fd,0,SEEK_END);	
+	for (i=3;i<argc;i++){
+		
+		f_name = argv[i];
+		//printf("%s\n",f_name);
+		int target_fd;
+		struct ar_hdr *f_hdr = malloc(sizeof(struct ar_hdr));
+		struct stat *f_stat = malloc(sizeof(struct stat));
+		target_fd = open(f_name, O_RDONLY); //the file to be appended
+		
+		if (target_fd == -1){
+			printf("Error: Target file to append not found\n");
+			close(target_fd);
+			close(ar_fd);
+			exit(-1);
+		}
+		//get metadata of the file 
+		fstat(target_fd, f_stat);
+		int f_blksz = (int)f_stat->st_blksize;
+
+		char namestr[strlen(f_name)+1];
+		strcpy (namestr,f_name);		
+		strcat(namestr, "/");
+		
+		/*
+		name 16
+		date 12
+		uid 6
+		gid 6
+		mode 8
+		size 10
+		famg 2
+		
+		*/
+		sprintf(f_hdr->ar_name, "%-16s", namestr);
+		sprintf(f_hdr->ar_date,"%-12d",(int)f_stat->st_mtime);
+		sprintf(f_hdr->ar_uid,"%-6d", (int)f_stat->st_uid);
+		sprintf(f_hdr->ar_gid,"%-6d", (int)f_stat->st_gid);
+		
+		sprintf(f_hdr->ar_mode,"%-8o",f_stat->st_mode);
+		sprintf(f_hdr->ar_size,"%-10d",(int)f_stat->st_size);
+		sprintf(f_hdr->ar_fmag,"%-2s",ARFMAG);	
+		//printf("%s\n",f_hdr);
+		write(ar_fd,f_hdr,sizeof(struct ar_hdr));
+		
+		//copy the content of the file
+		int f_blocks = (int)f_stat->st_blocks;
+		char* f_buffer[f_blocks];
+		int actual_size;
+		while(actual_size = read(target_fd,f_buffer,f_blocks)){
+			
+			write(ar_fd,f_buffer,actual_size);
+
+		}
+		
+		if ((lseek(ar_fd,0,SEEK_END)%2)){
+			write(ar_fd,"\n",1);
+		}
+		
+		close(target_fd);
+
+	}
+	close(ar_fd);
+	exit(0);
+
+}
+
+void ar_appall(int ar_fd, int argc, char **argv){
+	//TODO- DONE but need to check
+	//artificially generate a list as argv and argc then pass into ar_app :)
+	//check current dir, add all file mod in 1h except argv[0] to new_argv
+	int count = 0;
+	
+	DIR *dp;
+	dp = opendir("./");
+	struct dirent *ep;
+	char* new_argv[10000];
+	new_argv[0] = argv[0];
+	new_argv[1] = "q";
+	new_argv[2] = argv[2];
+	int new_argc = 2;
+	
+	while (ep = readdir(dp) ){
+		if ((ep->d_type == DT_REG) && (strcmp(ep->d_name, argv[2]) != 0)){
+			char* filename = ep->d_name;
+			struct stat *f_stat = malloc(sizeof(struct stat));
+			stat(filename,f_stat);
+			//printf("%s\n",filename);
+			//printf("%f\n",difftime(time(NULL), f_stat->st_mtime));
+			if  ( difftime(time(NULL), f_stat->st_mtime)<=3600){
+				new_argc ++;
+				new_argv[new_argc] = filename;
+				
+
+			}
+		}
+		
+
+	}
+	ar_app(ar_fd,new_argc,new_argv);
+
+	
+
+}
+
+void ar_del(int ar_fd, int argc, char **argv){
+	//TODO
+	//read through the ar file
+	//maintain a list of file 2b deleted
+	//if (inlist){skip;inlist.rm()file;} else {read and write}	
+
+	char* to_del[argc - 3];
+	int num_to_del = argc - 3;
+	int i;
+	struct stat *f_stat = malloc(sizeof(struct stat));
+	for (i=0; i<argc-3;i++){
+		to_del[i] = argv[i+3];
+	}
+	//creat a new file
+	unlink(argv[2]);
+	int new_ar_fd= open(argv[2],O_RDWR|O_CREAT,0666);
+	write(new_ar_fd, ARMAG, 8);
+	fstat(new_ar_fd, f_stat);
+	int f_blocks = (int)f_stat->st_blocks;
+
+	//each time read a header and go thru the del_list
+	struct ar_hdr * file_header = malloc(sizeof(struct ar_hdr));
+
+	while(read(ar_fd, file_header, sizeof(struct ar_hdr)) == sizeof(struct ar_hdr)){
+		//if inlist?
+		
+		char *filename = malloc(20);
+		sprintf(filename, "%-16s", file_header->ar_name);		
+		int j;
+		
+		for (j=16;j>=0;j--){
+			if (filename[j] == '/'){
+				filename[j] = '\0';
+				break;
+			}
+
+		}
+		//printf("Searching %s\n",filename);
+		int flag = 0;
+		for (j=0;j<argc-3;j++){
+			//printf("against %s\n",to_del[j]);			
+			if ((strcmp(filename, to_del[j]) == 0)){
+				
+				flag = 1;			
+				to_del[j] = "\n";
+				break;
+
+			}
+		}
+		
+		int filesize = (int)strtol(file_header->ar_size,NULL,10);
+		if (flag == 0){
+			//write
+
+
+
+			write(new_ar_fd,file_header,sizeof(struct ar_hdr));
+			
+			//copy the content of the file
+
+			char* f_buffer[f_blocks];
+			int remaining_size = filesize;
+			int actual_size;
+
+			while(remaining_size > f_blocks){
+				actual_size = read(ar_fd,f_buffer,f_blocks);
+				write(new_ar_fd,f_buffer,actual_size);
+				remaining_size -= actual_size;
+			}
+			actual_size = read(ar_fd,f_buffer,remaining_size);
+			write(new_ar_fd,f_buffer,actual_size);
+		
+			if ((lseek(new_ar_fd,0,SEEK_CUR)%2)){
+				write(new_ar_fd,"\n",1);
+			}
+
+			if ((lseek(ar_fd,0,SEEK_CUR)%2)){
+				lseek(ar_fd,1,SEEK_CUR);
+			}
+
+		} else {
+			//skip
+			
+			if (filesize%2) filesize++;
+			lseek(ar_fd,filesize,SEEK_CUR);
+			printf("going thru:%s\n",file_header->ar_name);
+			
+		}
+
+	}
+
+	close(ar_fd);
+	close(new_ar_fd);
+	exit(0);
+}
+
+hhhhh/          1477069573  21760 88    100644  32468     `
+!<arch>
+ggggg/          1477069528  21760 88    100644  16204     `
+!<arch>
+myar/           1477069457  21760 88    100755  16135     `
+ELF          >    0@     @       X)          @ 8  @         @       @ @     @ @     À      À                           @      @                                          @       @     T%      T%                    X%      X%`     X%`     Ô      è                    €%      €%`     €%`                                    @     @     D       D              Påtd   p#      p#@     p#@     d       d              Qåtd                                                  /lib64/ld-linux-x86-64.so.2          GNU                       GNU NGp:éÂzùòbj¢ÊŞJíÓu                                                     /                                            »                                             F                      6                      !                      R                      q                      |                      Ï                      K                      ’                      j                      Š                      ç                      &                      .                      ƒ                      v                      c                      ˜                      ï                      È                                            ²                      Á                      ¨                      á                      Z                      £                      ¶                       __gmon_start__ libc.so.6 strcpy exit readdir sprintf __isoc99_sscanf puts unlink putchar strftime strtol strlen read lseek malloc strcat opendir creat atoi close open localtime difftime utime access strcmp __libc_start_main write __xstat __fxstat GLIBC_2.7 GLIBC_2.2.5                                                ii   ø      ui	         '`                   0'`                   8'`                   @'`                   H'`                   P'`                   X'`                   `'`                   h'`        	           p'`        
+           x'`                   €'`                   ˆ'`                   '`                   ˜'`                    '`                   ¨'`                   °'`                   ¸'`                   À'`                   È'`                   Ğ'`                   Ø'`                   à'`                   è'`                   ğ'`                   ø'`                    (`                   (`                   (`                   (`                    (`                    Hƒìè;  èÊ  èE  HƒÄÃÿ5ê  ÿ%ì  @ ÿ%ê  h    éàÿÿÿÿ%â  h   éĞÿÿÿÿ%Ú  h   éÀÿÿÿÿ%Ò  h   é°ÿÿÿÿ%Ê  h   é ÿÿÿÿ%Â  h   éÿÿÿÿ%º  h   é€ÿÿÿÿ%²  h   épÿÿÿÿ%ª  h   é`ÿÿÿÿ%¢  h	   éPÿÿÿÿ%š  h
+   é@ÿÿÿÿ%’  h   é0ÿÿÿÿ%Š  h   é ÿÿÿÿ%‚  h   éÿÿÿÿ%z  h   é ÿÿÿÿ%r  h   éğşÿÿÿ%j  h   éàşÿÿÿ%b  h   éĞşÿÿÿ%Z  h   éÀşÿÿÿ%R  h   é°şÿÿÿ%J  h   é şÿÿÿ%B  h   éşÿÿÿ%:  h   é€şÿÿÿ%2  h   épşÿÿÿ%*  h   é`şÿÿÿ%"  h   éPşÿÿÿ%  h   é@şÿÿÿ%  h   é0şÿÿÿ%
+  h   é şÿÿÿ%  h   éşÿÿÿ%ú  h   é şÿÿ1íI‰Ñ^H‰âHƒäğPTIÇÀ°@ HÇÁÀ@ HÇÇ`@ èwşÿÿôHƒìH‹©  H…ÀtÿĞHƒÄÃUH‰åSHƒì€=    uK»p%` H‹š  Hëh%` HÁûHƒëH9Øs$fD  HƒÀH‰u  ÿÅh%` H‹g  H9ØrâÆS  HƒÄ[ÉÃfff.„     Hƒ=€   UH‰åt¸    H…Àt¿x%` ÉÿàÉÃUH‰å¿È@ èNıÿÿ¿è@ èDıÿÿ¿@ è:ıÿÿ¿(@ è0ıÿÿ¿`@ è&ıÿÿ¿˜@ èıÿÿ¿À@ èıÿÿÉÃUH‰åHƒì@‰}ÌH‰uÀƒ}Ì¸    è•ÿÿÿ¿   èıÿÿH‹EÀHƒÀH‹ ¶ ˆEçH‹EÀHƒÀH‹ H‰Eè€}çq”Â€}çx”À	Ğ¶Ğ€}çt”À¶À	Â€}çv”À¶À	Â€}çd”À¶À	Â€}çA”À¶À	Ğ…Àu¸    èÿÿÿ¿   èŒüÿÿH‹Eè¾    H‰Çè»ıÿÿƒøÿtfH‹Eè¾   H‰Ç¸    èàıÿÿ‰EüÆEØ HMĞ‹Eüº   H‰Î‰ÇècüÿÿHEĞ¾D @ H‰ÇèBıÿÿ…Àt|¿M @ èüÿÿ‹Eü‰ÇèÚûÿÿ¿ÿÿÿÿèüÿÿ€}çqt€}çAu>H‹Eèº¶  ¾B   H‰Ç¸    èiıÿÿ‰Eü¿p @ è¼ûÿÿ‹Eüº   ¾D @ ‰Çè(ıÿÿë¿¨ @ èœûÿÿ¿ÿÿÿÿè²ûÿÿ¾EçƒèAƒø7‡ƒ   ‰ÀH‹ÅĞ @ ÿà‹Eü¾    ‰Çèt   ëp‹Eü¾   ‰Çèc   ë_H‹UÀ‹MÌ‹Eü‰Î‰ÇèN  ëJH‹UÀ‹MÌ‹Eü‰Î‰ÇèŞ  ë5H‹UÀ‹MÌ‹Eü‰Î‰ÇèR	  ë H‹UÀ‹MÌ‹Eü‰Î‰Çè“
+  ë
+¿ÿÿÿÿèûÿÿÉÃUH‰åHìğ   ‰½ÿÿÿ‰µÿÿÿ¿<   è"ûÿÿH‰EÈéI  H‹EÈHƒÀ0º
+   ¾    H‰Çè¯ûÿÿ‰EÔÇEĞ   ë$‹EĞH‹UÈH˜¶</u‹EĞH‹UÈH˜Æ ë
+ƒmĞƒ}Ğ Öƒ½ÿÿÿ uH‹EÈH‰Çèdúÿÿé¶  ÇEä   éÎ   ‹EäH‹UÈH˜¶D(¾Àƒè0‰Eğ‹Eğ‰ÂÁúÁêĞƒà)Ğ‰Eô‹Eğ‰ÂÁêÑø‰Eğ‹Eğ‰ÂÁúÁêĞƒà)Ğ‰Eø‹Eğ‰ÂÁêÑø‰Eğ‹Eğ‰ÂÁúÁêĞƒà)Ğ‰Eüƒ}ü t¿r   èıùÿÿë
+¿-   èñùÿÿƒ}ø t¿w   èáùÿÿë
+¿-   èÕùÿÿƒ}ô t¿x   èÅùÿÿë
+¿-   è¹ùÿÿƒEäƒ}ä(ÿÿÿH‹EÈHƒÀH‰Çè{úÿÿ‰EèH‹EÈHƒÀ"H‰Çèhúÿÿ‰Eì¸"@ ‹Uì‹Mè‰ÎH‰Ç¸    èùÿÿ¸š"@ ‹UÔ‰ÖH‰Ç¸    èôøÿÿH‹EÈHƒÀº
+   ¾    H‰Çè
+úÿÿH‰EÀHEÀH‰ÇèjúÿÿH‰Áº"@ H… ÿÿÿ¾   H‰Çènúÿÿ¸ª"@ H• ÿÿÿH‰ÖH‰Ç¸    è’øÿÿH‹UÈ¸°"@ H‰ÖH‰Ç¸    èyøÿÿ‹EÔƒà„ÀtƒEÔ‹EÔHcÈ‹…ÿÿÿº   H‰Î‰ÇèpùÿÿH‹MÈ‹…ÿÿÿº<   H‰Î‰Çè§øÿÿHƒø<„”ıÿÿ‹…ÿÿÿ‰Çè0øÿÿÉÃUH‰åSHƒìx‰}Œ‰uˆH‰U€¿<   èøÿÿH‰E¨¸·"@ ‹Uˆ‰ÖH‰Ç¸    èæ÷ÿÿÇE¤   éû  H‰àH‰Ã‹E¤H˜HÁàHE€H‹¸»"@ H‰ÖH‰Ç¸    è¯÷ÿÿÇE´    éÖ   ÇEì   ë$‹EìH‹U¨H˜¶</u‹EìH‹U¨H˜Æ ë
+ƒmìƒ}ì yÖH‹E¨HƒÀ0º
+   ¾    H‰Çè†øÿÿ‰E°‹E¤H˜HÁàHE€H‹H‹E¨H‰ÖH‰Çè”øÿÿ…ÀtA‹E°ƒà„ÀtƒE°‹E°HcÈ‹EŒº   H‰Î‰Çè*øÿÿH‹U¨¸Ç"@ H‰ÖH‰Ç¸    èñöÿÿë"ÇE´   H‹U¨¸Ö"@ H‰ÖH‰Ç¸    èÏöÿÿë H‹M¨‹EŒº<   H‰Î‰Çè'÷ÿÿHƒø<„
+ÿÿÿƒ}´ u¿à"@ èÍöÿÿ¿ÿÿÿÿèãöÿÿ¿   è	÷ÿÿH‰E¸¹#@ H‹E¨HƒÀ(H‹UÀH‰ÎH‰Ç¸    è¤öÿÿH‹E¨HƒÀº
+   ¾    H‰Çèz÷ÿÿH‰EÈH‹E¸H‹UÈH‰H‹E¸H‹UÈH‰PH‹EÀ‹H‹E¨HH(¸#@ H‰ÎH‰Ç¸    èöÿÿH‹EÀ‹ ‰ÂH‹E¨‰ÖH‰Çè¦öÿÿ‰EÔ¿   èiöÿÿH‰EØH‹UØ‹EÔH‰Ö‰Çèô	  H‹EØH‹@@‰Eà‹EàHcĞHƒêH‰UH˜HÁàHƒÀHƒÀHÁèHÁàH)ÄH‰àHƒÀHÁèHÁàH‰E˜‹E°‰Eäë7‹EàHcĞH‹M˜‹EŒH‰Î‰Çèàõÿÿ‰Eè‹EèHcĞH‹M˜‹EÔH‰Î‰Çè÷ÿÿ‹Eè)Eä‹Eä;EàÁ‹EäHcĞH‹M˜‹EŒH‰Î‰Çè¡õÿÿ‰Eè‹EèHcĞH‹M˜‹EÔH‰Î‰ÇèÇöÿÿ‹EÔ‰ÇèõÿÿH‹E¨H‹U¸H‰ÖH‰Çèõÿÿ‹EŒº   ¾    ‰ÇèöÿÿH‰ÜƒE¤‹E¤;EˆŒùüÿÿ‹EŒ‰ÇèÙôÿÿH‹]øÉÃUH‰åSHƒìx‰}Œ‰uˆH‰U€‹Eˆƒè‰E¸‹EŒº   ¾    ‰Çè³õÿÿÇE¼   éÒ  H‰àH‰Ã‹E¼H˜HÁàHE€H‹ H‰EÀ¿<   èãôÿÿH‰EĞ¿   èÕôÿÿH‰EØH‹EÀ¾    H‰Ç¸    èöÿÿ‰EÌƒ}Ìÿu(¿#@ èXôÿÿ‹EÌ‰Çè.ôÿÿ‹EŒ‰Çè$ôÿÿ¿ÿÿÿÿèZôÿÿH‹UØ‹EÌH‰Ö‰Çè  H‹EØH‹@8‰EäH‹EÀH‰Çè¢ôÿÿHƒÀH‰ÂHƒêH‰U˜HƒÀHƒÀHÁèHÁàH)ÄH‰àHƒÀHÁèHÁàH‰E H‹UÀH‹E H‰ÖH‰Çè
+õÿÿº7#@ H‹E H‰ÖH‰Çè–ôÿÿH‹U ¹9#@ H‹EĞH‰ÎH‰Ç¸    èiôÿÿH‹EØH‹@X‰Â¸?#@ H‹MĞHƒÁH‰ÆH‰Ï¸    èBôÿÿH‹EØ‹@‰Â¸E#@ H‹MĞHƒÁH‰ÆH‰Ï¸    èôÿÿH‹EØ‹@ ‰Â¸E#@ H‹MĞHƒÁ"H‰ÆH‰Ï¸    èöóÿÿH‹EØ‹P¸J#@ H‹MĞHƒÁ(H‰ÆH‰Ï¸    èÒóÿÿH‹EØH‹@0‰Â¸O#@ H‹MĞHƒÁ0H‰ÆH‰Ï¸    è«óÿÿ¸U#@ H‹UĞHJ:ºZ#@ H‰ÆH‰Ï¸    è‰óÿÿH‹MĞ‹EŒº<   H‰Î‰Çè#ôÿÿH‹EØH‹@@‰Eè‹EèHcĞHƒêH‰U¨H˜HÁàHƒÀHƒÀHÁèHÁàH)ÄH‰àHƒÀHÁèHÁàH‰E°ë‹EìHcĞH‹M°‹EŒH‰Î‰ÇèÅóÿÿ‹EèHcĞH‹M°‹EÌH‰Î‰Çènòÿÿ‰Eìƒ}ì uÉ‹EŒº   ¾    ‰Çèóÿÿƒà„Àt‹EŒº   ¾]#@ ‰Çèvóÿÿ‹EÌ‰ÇèÌñÿÿH‰ÜƒE¼‹E¼;EˆŒ"ıÿÿ‹EŒ‰Çè¯ñÿÿ¿    èåñÿÿUH‰åSHìÈ8 ‰½<Çşÿ‰µ8ÇşÿH‰•0ÇşÿÇEÄ    ¿_#@ è5òÿÿH‰EÈH‹…0ÇşÿH‹ H‰…@ÇşÿHÇ…HÇşÿb#@ H‹…0ÇşÿHƒÀH‹ H‰…PÇşÿÇEÜ   é§   H‹EĞ¶@<…—   H‹…0ÇşÿHƒÀH‹ H‹UĞHƒÂH‰ÆH‰×èSòÿÿ…ÀtrH‹EĞHƒÀH‰Eà¿   èYñÿÿH‰EèH‹EàH‹UèH‰ÖH‰ÇèÒ  H‹EèH‹XX¿    èòÿÿH‰ŞH‰Çè%òÿÿòÅ	  f.È“À„ÀtƒEÜ‹EÜH˜H‹UàH‰”Å@ÇşÿH‹EÈH‰ÇèañÿÿH‰EĞHƒ}Ğ …>ÿÿÿH•@Çşÿ‹MÜ‹…<Çşÿ‰Î‰Çè†ûÿÿHÄÈ8 [ÉÃUH‰åSHƒìx‰}Œ‰uˆH‰U€‹EˆƒèHcĞHƒêH‰UH˜HÁàHƒÀHƒÀHÁèHÁàH)ÄH‰àHƒÀHÁèHÁàH‰E˜‹Eˆƒè‰E°¿   è\ğÿÿH‰E¸ÇE´    ë&‹U´‹E´H˜HƒÀHÁàHE€H‹H‹E˜HcÒH‰ĞƒE´‹Eˆƒè;E´ÏH‹E€HƒÀH‹ H‰Çè+ğÿÿH‹E€HƒÀH‹ º¶  ¾B   H‰Ç¸    è9ñÿÿ‰EÀ‹EÀº   ¾D @ ‰ÇèñÿÿH‹U¸‹EÀH‰Ö‰Çèa  H‹E¸H‹@@‰EÄ¿<   è¬ïÿÿH‰EÈéN  ¿   è™ïÿÿH‰EĞH‹UÈ¹9#@ H‹EĞH‰ÎH‰Ç¸    èøïÿÿÇEÜ   ë"‹EÜH˜HEĞ¶ </u‹EÜH˜HEĞÆ  ë
+ƒmÜƒ}Ü yØÇEà    ÇEÜ    ë@‹UÜH‹E˜HcÒH‹ĞH‹EĞH‰ÖH‰Çèúïÿÿ…ÀuÇEà   ‹UÜH‹E˜HcÒHÇĞ]#@ ëƒEÜ‹Eˆƒè;EÜµH‹EÈHƒÀ0º
+   ¾    H‰Çè‚ïÿÿ‰Eäƒ}à …1  H‰àH‰ÃH‹MÈ‹EÀº<   H‰Î‰ÇèÙïÿÿ‹EÄHcĞHƒêH‰U H˜HÁàHƒÀHƒÀHÁèHÁàH)ÄH‰àHƒÀHÁèHÁàH‰E¨‹Eä‰Eèë7‹EÄHcĞH‹M¨‹EŒH‰Î‰Çè@îÿÿ‰Eì‹EìHcĞH‹M¨‹EÀH‰Î‰Çèfïÿÿ‹Eì)Eè‹Eè;EÄÁ‹EèHcĞH‹M¨‹EŒH‰Î‰Çèîÿÿ‰Eì‹EìHcĞH‹M¨‹EÀH‰Î‰Çè'ïÿÿ‹EÀº   ¾    ‰Çèƒîÿÿƒà„Àt‹EÀº   ¾]#@ ‰Çèøîÿÿ‹EŒº   ¾    ‰ÇèTîÿÿƒà„Àt‹EŒº   ¾   ‰Çè9îÿÿH‰Üë?‹Eäƒà„ÀtƒEä‹EäHcÈ‹EŒº   H‰Î‰ÇèîÿÿH‹UÈ¸Ç"@ H‰ÖH‰Ç¸    èÕìÿÿH‹MÈ‹EŒº<   H‰Î‰Çè/íÿÿHƒø<„’ıÿÿ‹EŒ‰Çè»ìÿÿ‹EÀ‰Çè±ìÿÿ¿    èçìÿÿóÃfffff.„     H‰l$ØL‰d$àH-ƒ  L%|  L‰l$èL‰t$ğL‰|$øH‰\$ĞHƒì8L)åA‰ıI‰öHÁıI‰×èìÿÿH…ít1Û@ L‰úL‰öD‰ïAÿÜHƒÃH9ërêH‹\$H‹l$L‹d$L‹l$ L‹t$(L‹|$0HƒÄ8ÃH‰òH‰ş¿   éÀìÿÿH‰ò‰ş¿   é!íÿÿUH‰åSHƒìH‹Ø  Hƒøÿt»X%` D  HƒëÿĞH‹HƒøÿuñHƒÄ[ÉÃHƒìèÏíÿÿHƒÄÃ                Usage: myar key afile name...   q	quickly append named files to archive x	extract named files   t	print a concise table of contents of the archive      v	print a verbose table of contents of the archive      d	delete named files from archive       A	quickly append all ordinary files in the current directory that have been modified within the last hour except the archive itself !<arch>
+ Error: File not recorgnized        Archive file not found; creating new archive file       Error: target archive file not exist    F@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     [@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     @     q@     q@     ú@     q@     @     q@     1@     %6d/%-6d  %d  %b %e %R %Y %-20s %-16s
+ %d
+ finding %s
+ going thru:%s
+ found %s
+ Error: file to extract not found. %o %s
+ %o
+    Error: Target file to append not found / %-16s %-12d %-6d %-8o %-10d %-2s `
+ 
+ ./ q           ¬@;d      ¤éÿÿ€   ğéÿÿ    ìÿÿÀ   ²îÿÿà   òÿÿ  ;õÿÿ(  ‘öÿÿP  @úÿÿp  Púÿÿˆ  àúÿÿ°  ğúÿÿÈ             zR x        éÿÿL    A†CG     <   Héÿÿ   A†C    \   Eëÿÿ¥   A†C  $   |   Êíÿÿ[   A†CTƒB         ¤   ığÿÿ.   A†Cgƒ    $   Ä   ôÿÿV   A†Cgƒ*         ì   9õÿÿ¨   A†CZƒ        Èøÿÿ           $   $  Àøÿÿ‰    QŒ†_@ƒX      L  (ùÿÿ              d   ùÿÿ                   ÿÿÿÿÿÿÿÿ        ÿÿÿÿÿÿÿÿ                                     
+@            ¨@     õşÿo    `@            ˜@            €@     
+                                                 '`            è                           0@            @                   	              şÿÿo    è@     ÿÿÿo           ğÿÿo    ¦@                                                                                                             €%`                     F
+@     V
+@     f
+@     v
+@     †
+@     –
+@     ¦
+@     ¶
+@     Æ
+@     Ö
+@     æ
+@     ö
+@     @     @     &@     6@     F@     V@     f@     v@     †@     –@     ¦@     ¶@     Æ@     Ö@     æ@     ö@     @     @     &@         GCC: (GNU) 4.4.7 20120313 (Red Hat 4.4.7-16)  .symtab .strtab .shstrtab .interp .note.ABI-tag .note.gnu.build-id .gnu.hash .dynsym .dynstr .gnu.version .gnu.version_r .rela.dyn .rela.plt .init .text .fini .rodata .eh_frame_hdr .eh_frame .ctors .dtors .jcr .dynamic .got .got.plt .data .bss .comment                                                                                @                                          #             @                                          1             <@     <      $                              D   öÿÿo       `@     `                                   N             €@     €                                V             ˜@     ˜                                   ^   ÿÿÿo       ¦@     ¦      B                            k   şÿÿo       è@     è      0                            z             @                                       „             0@     0      è                                       
+@     
+                                    ‰             0
+@     0
+                                   ”             0@     0      x                             š             ¨@     ¨                                                  ¸@     ¸      ¸                             ¨             p#@     p#      d                              ¶             Ø#@     Ø#      |                             À             X%`     X%                                    Ç             h%`     h%                                    Î             x%`     x%                                    Ó             €%`     €%                                 Ü             '`     '                                   á             '`     '                                  ê             ((`     ((                                    ğ             0(`     ,(                                    õ      0               ,(      -                                                   Y(      ş                                                    Ø0      ¨	         .                 	                      €:      ‡                                                            @                   @                   <@                   `@                   €@                   ˜@                   ¦@                   è@                  	 @                  
+ 0@                   
+@                   0
+@                   0@                   ¨@                   ¸@                   p#@                   Ø#@                   X%`                   h%`                   x%`                   €%`                   '`                   '`                   ((`                   0(`                                        \@                 ñÿ                     X%`             *     h%`             8     x%`             E     €@             [     0(`            j     8(`            x     ğ@                 ñÿ                „     `%`             ‘     P%@             Ÿ     x%`             «     p@             Á    ñÿ                È     '`             Ş      T%`             ï      T%`                 €%`                  ((`                                  *    °@            :    0@             A                     T                     g                      v                      Š                     œ                     ·                     É    ¨@             Ï   `@            ×                     ì                     ş                                          1                     E    }@     ¥      M   P@            T  " P@            Y    ¸@            h                     {                         ((`             œ                     ±                     Æ                     Û                     ğ    @     ¨      ÷    }@     .      ş                        À@                 @     L       +                     >                     R   p%`             _    À@     ‰       o                                          —   ñÿ,(`             £                     ·    "@     [      ¾                     Ò   ñÿ@(`             ×                     í  " `@            ó                         «@     V         ñÿ,(`                                  /                     B                     X                     j                     |    `@               
+@              call_gmon_start crtstuff.c __CTOR_LIST__ __DTOR_LIST__ __JCR_LIST__ __do_global_dtors_aux completed.6349 dtor_idx.6351 frame_dummy __CTOR_END__ __FRAME_END__ __JCR_END__ __do_global_ctors_aux myar.c _GLOBAL_OFFSET_TABLE_ __init_array_end __init_array_start _DYNAMIC data_start printf@@GLIBC_2.2.5 __libc_csu_fini _start close@@GLIBC_2.2.5 utime@@GLIBC_2.2.5 __gmon_start__ _Jv_RegisterClasses puts@@GLIBC_2.2.5 __isoc99_sscanf@@GLIBC_2.7 exit@@GLIBC_2.2.5 _fini __fstat putchar@@GLIBC_2.2.5 read@@GLIBC_2.2.5 malloc@@GLIBC_2.2.5 __libc_start_main@@GLIBC_2.2.5 unlink@@GLIBC_2.2.5 ar_list __stat stat _IO_stdin_used creat@@GLIBC_2.2.5 strlen@@GLIBC_2.2.5 __data_start opendir@@GLIBC_2.2.5 __xstat@@GLIBC_2.2.5 readdir@@GLIBC_2.2.5 sprintf@@GLIBC_2.2.5 ar_del ar_app strcat@@GLIBC_2.2.5 __dso_handle print_usage lseek@@GLIBC_2.2.5 strtol@@GLIBC_2.2.5 __DTOR_END__ __libc_csu_init atoi@@GLIBC_2.2.5 __fxstat@@GLIBC_2.2.5 __bss_start strcmp@@GLIBC_2.2.5 ar_ext strcpy@@GLIBC_2.2.5 _end difftime@@GLIBC_2.2.5 fstat access@@GLIBC_2.2.5 ar_appall _edata localtime@@GLIBC_2.2.5 write@@GLIBC_2.2.5 strftime@@GLIBC_2.2.5 open@@GLIBC_2.2.5 time@@GLIBC_2.2.5 main _init 
+myar/           1477069457  21760 88    100755  16135     `
+ELF          >    0@     @       X)          @ 8  @         @       @ @     @ @     À      À                           @      @                                          @       @     T%      T%                    X%      X%`     X%`     Ô      è                    €%      €%`     €%`                                    @     @     D       D              Påtd   p#      p#@     p#@     d       d              Qåtd                                                  /lib64/ld-linux-x86-64.so.2          GNU                       GNU NGp:éÂzùòbj¢ÊŞJíÓu                                                     /                                            »                                             F                      6                      !                      R                      q                      |                      Ï                      K                      ’                      j                      Š                      ç                      &                      .                      ƒ                      v                      c                      ˜                      ï                      È                                            ²                      Á                      ¨                      á                      Z                      £                      ¶                       __gmon_start__ libc.so.6 strcpy exit readdir sprintf __isoc99_sscanf puts unlink putchar strftime strtol strlen read lseek malloc strcat opendir creat atoi close open localtime difftime utime access strcmp __libc_start_main write __xstat __fxstat GLIBC_2.7 GLIBC_2.2.5                                                ii   ø      ui	         '`                   0'`                   8'`                   @'`                   H'`                   P'`                   X'`                   `'`                   h'`        	           p'`        
+           x'`                   €'`                   ˆ'`                   '`                   ˜'`                    '`                   ¨'`                   °'`                   ¸'`                   À'`                   È'`                   Ğ'`                   Ø'`                   à'`                   è'`                   ğ'`                   ø'`                    (`                   (`                   (`                   (`                    (`                    Hƒìè;  èÊ  èE  HƒÄÃÿ5ê  ÿ%ì  @ ÿ%ê  h    éàÿÿÿÿ%â  h   éĞÿÿÿÿ%Ú  h   éÀÿÿÿÿ%Ò  h   é°ÿÿÿÿ%Ê  h   é ÿÿÿÿ%Â  h   éÿÿÿÿ%º  h   é€ÿÿÿÿ%²  h   épÿÿÿÿ%ª  h   é`ÿÿÿÿ%¢  h	   éPÿÿÿÿ%š  h
+   é@ÿÿÿÿ%’  h   é0ÿÿÿÿ%Š  h   é ÿÿÿÿ%‚  h   éÿÿÿÿ%z  h   é ÿÿÿÿ%r  h   éğşÿÿÿ%j  h   éàşÿÿÿ%b  h   éĞşÿÿÿ%Z  h   éÀşÿÿÿ%R  h   é°şÿÿÿ%J  h   é şÿÿÿ%B  h   éşÿÿÿ%:  h   é€şÿÿÿ%2  h   épşÿÿÿ%*  h   é`şÿÿÿ%"  h   éPşÿÿÿ%  h   é@şÿÿÿ%  h   é0şÿÿÿ%
+  h   é şÿÿÿ%  h   éşÿÿÿ%ú  h   é şÿÿ1íI‰Ñ^H‰âHƒäğPTIÇÀ°@ HÇÁÀ@ HÇÇ`@ èwşÿÿôHƒìH‹©  H…ÀtÿĞHƒÄÃUH‰åSHƒì€=    uK»p%` H‹š  Hëh%` HÁûHƒëH9Øs$fD  HƒÀH‰u  ÿÅh%` H‹g  H9ØrâÆS  HƒÄ[ÉÃfff.„     Hƒ=€   UH‰åt¸    H…Àt¿x%` ÉÿàÉÃUH‰å¿È@ èNıÿÿ¿è@ èDıÿÿ¿@ è:ıÿÿ¿(@ è0ıÿÿ¿`@ è&ıÿÿ¿˜@ èıÿÿ¿À@ èıÿÿÉÃUH‰åHƒì@‰}ÌH‰uÀƒ}Ì¸    è•ÿÿÿ¿   èıÿÿH‹EÀHƒÀH‹ ¶ ˆEçH‹EÀHƒÀH‹ H‰Eè€}çq”Â€}çx”À	Ğ¶Ğ€}çt”À¶À	Â€}çv”À¶À	Â€}çd”À¶À	Â€}çA”À¶À	Ğ…Àu¸    èÿÿÿ¿   èŒüÿÿH‹Eè¾    H‰Çè»ıÿÿƒøÿtfH‹Eè¾   H‰Ç¸    èàıÿÿ‰EüÆEØ HMĞ‹Eüº   H‰Î‰ÇècüÿÿHEĞ¾D @ H‰ÇèBıÿÿ…Àt|¿M @ èüÿÿ‹Eü‰ÇèÚûÿÿ¿ÿÿÿÿèüÿÿ€}çqt€}çAu>H‹Eèº¶  ¾B   H‰Ç¸    èiıÿÿ‰Eü¿p @ è¼ûÿÿ‹Eüº   ¾D @ ‰Çè(ıÿÿë¿¨ @ èœûÿÿ¿ÿÿÿÿè²ûÿÿ¾EçƒèAƒø7‡ƒ   ‰ÀH‹ÅĞ @ ÿà‹Eü¾    ‰Çèt   ëp‹Eü¾   ‰Çèc   ë_H‹UÀ‹MÌ‹Eü‰Î‰ÇèN  ëJH‹UÀ‹MÌ‹Eü‰Î‰ÇèŞ  ë5H‹UÀ‹MÌ‹Eü‰Î‰ÇèR	  ë H‹UÀ‹MÌ‹Eü‰Î‰Çè“
+  ë
+¿ÿÿÿÿèûÿÿÉÃUH‰åHìğ   ‰½ÿÿÿ‰µÿÿÿ¿<   è"ûÿÿH‰EÈéI  H‹EÈHƒÀ0º
+   ¾    H‰Çè¯ûÿÿ‰EÔÇEĞ   ë$‹EĞH‹UÈH˜¶</u‹EĞH‹UÈH˜Æ ë
+ƒmĞƒ}Ğ Öƒ½ÿÿÿ uH‹EÈH‰Çèdúÿÿé¶  ÇEä   éÎ   ‹EäH‹UÈH˜¶D(¾Àƒè0‰Eğ‹Eğ‰ÂÁúÁêĞƒà)Ğ‰Eô‹Eğ‰ÂÁêÑø‰Eğ‹Eğ‰ÂÁúÁêĞƒà)Ğ‰Eø‹Eğ‰ÂÁêÑø‰Eğ‹Eğ‰ÂÁúÁêĞƒà)Ğ‰Eüƒ}ü t¿r   èıùÿÿë
+¿-   èñùÿÿƒ}ø t¿w   èáùÿÿë
+¿-   èÕùÿÿƒ}ô t¿x   èÅùÿÿë
+¿-   è¹ùÿÿƒEäƒ}ä(ÿÿÿH‹EÈHƒÀH‰Çè{úÿÿ‰EèH‹EÈHƒÀ"H‰Çèhúÿÿ‰Eì¸"@ ‹Uì‹Mè‰ÎH‰Ç¸    èùÿÿ¸š"@ ‹UÔ‰ÖH‰Ç¸    èôøÿÿH‹EÈHƒÀº
+   ¾    H‰Çè
+úÿÿH‰EÀHEÀH‰ÇèjúÿÿH‰Áº"@ H… ÿÿÿ¾   H‰Çènúÿÿ¸ª"@ H• ÿÿÿH‰ÖH‰Ç¸    è’øÿÿH‹UÈ¸°"@ H‰ÖH‰Ç¸    èyøÿÿ‹EÔƒà„ÀtƒEÔ‹EÔHcÈ‹…ÿÿÿº   H‰Î‰ÇèpùÿÿH‹MÈ‹…ÿÿÿº<   H‰Î‰Çè§øÿÿHƒø<„”ıÿÿ‹…ÿÿÿ‰Çè0øÿÿÉÃUH‰åSHƒìx‰}Œ‰uˆH‰U€¿<   èøÿÿH‰E¨¸·"@ ‹Uˆ‰ÖH‰Ç¸    èæ÷ÿÿÇE¤   éû  H‰àH‰Ã‹E¤H˜HÁàHE€H‹¸»"@ H‰ÖH‰Ç¸    è¯÷ÿÿÇE´    éÖ   ÇEì   ë$‹EìH‹U¨H˜¶</u‹EìH‹U¨H˜Æ ë
+ƒmìƒ}ì yÖH‹E¨HƒÀ0º
+   ¾    H‰Çè†øÿÿ‰E°‹E¤H˜HÁàHE€H‹H‹E¨H‰ÖH‰Çè”øÿÿ…ÀtA‹E°ƒà„ÀtƒE°‹E°HcÈ‹EŒº   H‰Î‰Çè*øÿÿH‹U¨¸Ç"@ H‰ÖH‰Ç¸    èñöÿÿë"ÇE´   H‹U¨¸Ö"@ H‰ÖH‰Ç¸    èÏöÿÿë H‹M¨‹EŒº<   H‰Î‰Çè'÷ÿÿHƒø<„
+ÿÿÿƒ}´ u¿à"@ èÍöÿÿ¿ÿÿÿÿèãöÿÿ¿   è	÷ÿÿH‰E¸¹#@ H‹E¨HƒÀ(H‹UÀH‰ÎH‰Ç¸    è¤öÿÿH‹E¨HƒÀº
+   ¾    H‰Çèz÷ÿÿH‰EÈH‹E¸H‹UÈH‰H‹E¸H‹UÈH‰PH‹EÀ‹H‹E¨HH(¸#@ H‰ÎH‰Ç¸    èöÿÿH‹EÀ‹ ‰ÂH‹E¨‰ÖH‰Çè¦öÿÿ‰EÔ¿   èiöÿÿH‰EØH‹UØ‹EÔH‰Ö‰Çèô	  H‹EØH‹@@‰Eà‹EàHcĞHƒêH‰UH˜HÁàHƒÀHƒÀHÁèHÁàH)ÄH‰àHƒÀHÁèHÁàH‰E˜‹E°‰Eäë7‹EàHcĞH‹M˜‹EŒH‰Î‰Çèàõÿÿ‰Eè‹EèHcĞH‹M˜‹EÔH‰Î‰Çè÷ÿÿ‹Eè)Eä‹Eä;EàÁ‹EäHcĞH‹M˜‹EŒH‰Î‰Çè¡õÿÿ‰Eè‹EèHcĞH‹M˜‹EÔH‰Î‰ÇèÇöÿÿ‹EÔ‰ÇèõÿÿH‹E¨H‹U¸H‰ÖH‰Çèõÿÿ‹EŒº   ¾    ‰ÇèöÿÿH‰ÜƒE¤‹E¤;EˆŒùüÿÿ‹EŒ‰ÇèÙôÿÿH‹]øÉÃUH‰åSHƒìx‰}Œ‰uˆH‰U€‹Eˆƒè‰E¸‹EŒº   ¾    ‰Çè³õÿÿÇE¼   éÒ  H‰àH‰Ã‹E¼H˜HÁàHE€H‹ H‰EÀ¿<   èãôÿÿH‰EĞ¿   èÕôÿÿH‰EØH‹EÀ¾    H‰Ç¸    èöÿÿ‰EÌƒ}Ìÿu(¿#@ èXôÿÿ‹EÌ‰Çè.ôÿÿ‹EŒ‰Çè$ôÿÿ¿ÿÿÿÿèZôÿÿH‹UØ‹EÌH‰Ö‰Çè  H‹EØH‹@8‰EäH‹EÀH‰Çè¢ôÿÿHƒÀH‰ÂHƒêH‰U˜HƒÀHƒÀHÁèHÁàH)ÄH‰àHƒÀHÁèHÁàH‰E H‹UÀH‹E H‰ÖH‰Çè
+õÿÿº7#@ H‹E H‰ÖH‰Çè–ôÿÿH‹U ¹9#@ H‹EĞH‰ÎH‰Ç¸    èiôÿÿH‹EØH‹@X‰Â¸?#@ H‹MĞHƒÁH‰ÆH‰Ï¸    èBôÿÿH‹EØ‹@‰Â¸E#@ H‹MĞHƒÁH‰ÆH‰Ï¸    èôÿÿH‹EØ‹@ ‰Â¸E#@ H‹MĞHƒÁ"H‰ÆH‰Ï¸    èöóÿÿH‹EØ‹P¸J#@ H‹MĞHƒÁ(H‰ÆH‰Ï¸    èÒóÿÿH‹EØH‹@0‰Â¸O#@ H‹MĞHƒÁ0H‰ÆH‰Ï¸    è«óÿÿ¸U#@ H‹UĞHJ:ºZ#@ H‰ÆH‰Ï¸    è‰óÿÿH‹MĞ‹EŒº<   H‰Î‰Çè#ôÿÿH‹EØH‹@@‰Eè‹EèHcĞHƒêH‰U¨H˜HÁàHƒÀHƒÀHÁèHÁàH)ÄH‰àHƒÀHÁèHÁàH‰E°ë‹EìHcĞH‹M°‹EŒH‰Î‰ÇèÅóÿÿ‹EèHcĞH‹M°‹EÌH‰Î‰Çènòÿÿ‰Eìƒ}ì uÉ‹EŒº   ¾    ‰Çèóÿÿƒà„Àt‹EŒº   ¾]#@ ‰Çèvóÿÿ‹EÌ‰ÇèÌñÿÿH‰ÜƒE¼‹E¼;EˆŒ"ıÿÿ‹EŒ‰Çè¯ñÿÿ¿    èåñÿÿUH‰åSHìÈ8 ‰½<Çşÿ‰µ8ÇşÿH‰•0ÇşÿÇEÄ    ¿_#@ è5òÿÿH‰EÈH‹…0ÇşÿH‹ H‰…@ÇşÿHÇ…HÇşÿb#@ H‹…0ÇşÿHƒÀH‹ H‰…PÇşÿÇEÜ   é§   H‹EĞ¶@<…—   H‹…0ÇşÿHƒÀH‹ H‹UĞHƒÂH‰ÆH‰×èSòÿÿ…ÀtrH‹EĞHƒÀH‰Eà¿   èYñÿÿH‰EèH‹EàH‹UèH‰ÖH‰ÇèÒ  H‹EèH‹XX¿    èòÿÿH‰ŞH‰Çè%òÿÿòÅ	  f.È“À„ÀtƒEÜ‹EÜH˜H‹UàH‰”Å@ÇşÿH‹EÈH‰ÇèañÿÿH‰EĞHƒ}Ğ …>ÿÿÿH•@Çşÿ‹MÜ‹…<Çşÿ‰Î‰Çè†ûÿÿHÄÈ8 [ÉÃUH‰åSHƒìx‰}Œ‰uˆH‰U€‹EˆƒèHcĞHƒêH‰UH˜HÁàHƒÀHƒÀHÁèHÁàH)ÄH‰àHƒÀHÁèHÁàH‰E˜‹Eˆƒè‰E°¿   è\ğÿÿH‰E¸ÇE´    ë&‹U´‹E´H˜HƒÀHÁàHE€H‹H‹E˜HcÒH‰ĞƒE´‹Eˆƒè;E´ÏH‹E€HƒÀH‹ H‰Çè+ğÿÿH‹E€HƒÀH‹ º¶  ¾B   H‰Ç¸    è9ñÿÿ‰EÀ‹EÀº   ¾D @ ‰ÇèñÿÿH‹U¸‹EÀH‰Ö‰Çèa  H‹E¸H‹@@‰EÄ¿<   è¬ïÿÿH‰EÈéN  ¿   è™ïÿÿH‰EĞH‹UÈ¹9#@ H‹EĞH‰ÎH‰Ç¸    èøïÿÿÇEÜ   ë"‹EÜH˜HEĞ¶ </u‹EÜH˜HEĞÆ  ë
+ƒmÜƒ}Ü yØÇEà    ÇEÜ    ë@‹UÜH‹E˜HcÒH‹ĞH‹EĞH‰ÖH‰Çèúïÿÿ…ÀuÇEà   ‹UÜH‹E˜HcÒHÇĞ]#@ ëƒEÜ‹Eˆƒè;EÜµH‹EÈHƒÀ0º
+   ¾    H‰Çè‚ïÿÿ‰Eäƒ}à …1  H‰àH‰ÃH‹MÈ‹EÀº<   H‰Î‰ÇèÙïÿÿ‹EÄHcĞHƒêH‰U H˜HÁàHƒÀHƒÀHÁèHÁàH)ÄH‰àHƒÀHÁèHÁàH‰E¨‹Eä‰Eèë7‹EÄHcĞH‹M¨‹EŒH‰Î‰Çè@îÿÿ‰Eì‹EìHcĞH‹M¨‹EÀH‰Î‰Çèfïÿÿ‹Eì)Eè‹Eè;EÄÁ‹EèHcĞH‹M¨‹EŒH‰Î‰Çèîÿÿ‰Eì‹EìHcĞH‹M¨‹EÀH‰Î‰Çè'ïÿÿ‹EÀº   ¾    ‰Çèƒîÿÿƒà„Àt‹EÀº   ¾]#@ ‰Çèøîÿÿ‹EŒº   ¾    ‰ÇèTîÿÿƒà„Àt‹EŒº   ¾   ‰Çè9îÿÿH‰Üë?‹Eäƒà„ÀtƒEä‹EäHcÈ‹EŒº   H‰Î‰ÇèîÿÿH‹UÈ¸Ç"@ H‰ÖH‰Ç¸    èÕìÿÿH‹MÈ‹EŒº<   H‰Î‰Çè/íÿÿHƒø<„’ıÿÿ‹EŒ‰Çè»ìÿÿ‹EÀ‰Çè±ìÿÿ¿    èçìÿÿóÃfffff.„     H‰l$ØL‰d$àH-ƒ  L%|  L‰l$èL‰t$ğL‰|$øH‰\$ĞHƒì8L)åA‰ıI‰öHÁıI‰×èìÿÿH…ít1Û@ L‰úL‰öD‰ïAÿÜHƒÃH9ërêH‹\$H‹l$L‹d$L‹l$ L‹t$(L‹|$0HƒÄ8ÃH‰òH‰ş¿   éÀìÿÿH‰ò‰ş¿   é!íÿÿUH‰åSHƒìH‹Ø  Hƒøÿt»X%` D  HƒëÿĞH‹HƒøÿuñHƒÄ[ÉÃHƒìèÏíÿÿHƒÄÃ                Usage: myar key afile name...   q	quickly append named files to archive x	extract named files   t	print a concise table of contents of the archive      v	print a verbose table of contents of the archive      d	delete named files from archive       A	quickly append all ordinary files in the current directory that have been modified within the last hour except the archive itself !<arch>
+ Error: File not recorgnized        Archive file not found; creating new archive file       Error: target archive file not exist    F@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     [@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     @     q@     q@     ú@     q@     @     q@     1@     %6d/%-6d  %d  %b %e %R %Y %-20s %-16s
+ %d
+ finding %s
+ going thru:%s
+ found %s
+ Error: file to extract not found. %o %s
+ %o
+    Error: Target file to append not found / %-16s %-12d %-6d %-8o %-10d %-2s `
+ 
+ ./ q           ¬@;d      ¤éÿÿ€   ğéÿÿ    ìÿÿÀ   ²îÿÿà   òÿÿ  ;õÿÿ(  ‘öÿÿP  @úÿÿp  Púÿÿˆ  àúÿÿ°  ğúÿÿÈ             zR x        éÿÿL    A†CG     <   Héÿÿ   A†C    \   Eëÿÿ¥   A†C  $   |   Êíÿÿ[   A†CTƒB         ¤   ığÿÿ.   A†Cgƒ    $   Ä   ôÿÿV   A†Cgƒ*         ì   9õÿÿ¨   A†CZƒ        Èøÿÿ           $   $  Àøÿÿ‰    QŒ†_@ƒX      L  (ùÿÿ              d   ùÿÿ                   ÿÿÿÿÿÿÿÿ        ÿÿÿÿÿÿÿÿ                                     
+@            ¨@     õşÿo    `@            ˜@            €@     
+                                                 '`            è                           0@            @                   	              şÿÿo    è@     ÿÿÿo           ğÿÿo    ¦@                                                                                                             €%`                     F
+@     V
+@     f
+@     v
+@     †
+@     –
+@     ¦
+@     ¶
+@     Æ
+@     Ö
+@     æ
+@     ö
+@     @     @     &@     6@     F@     V@     f@     v@     †@     –@     ¦@     ¶@     Æ@     Ö@     æ@     ö@     @     @     &@         GCC: (GNU) 4.4.7 20120313 (Red Hat 4.4.7-16)  .symtab .strtab .shstrtab .interp .note.ABI-tag .note.gnu.build-id .gnu.hash .dynsym .dynstr .gnu.version .gnu.version_r .rela.dyn .rela.plt .init .text .fini .rodata .eh_frame_hdr .eh_frame .ctors .dtors .jcr .dynamic .got .got.plt .data .bss .comment                                                                                @                                          #             @                                          1             <@     <      $                              D   öÿÿo       `@     `                                   N             €@     €                                V             ˜@     ˜                                   ^   ÿÿÿo       ¦@     ¦      B                            k   şÿÿo       è@     è      0                            z             @                                       „             0@     0      è                                       
+@     
+                                    ‰             0
+@     0
+                                   ”             0@     0      x                             š             ¨@     ¨                                                  ¸@     ¸      ¸                             ¨             p#@     p#      d                              ¶             Ø#@     Ø#      |                             À             X%`     X%                                    Ç             h%`     h%                                    Î             x%`     x%                                    Ó             €%`     €%                                 Ü             '`     '                                   á             '`     '                                  ê             ((`     ((                                    ğ             0(`     ,(                                    õ      0               ,(      -                                                   Y(      ş                                                    Ø0      ¨	         .                 	                      €:      ‡                                                            @                   @                   <@                   `@                   €@                   ˜@                   ¦@                   è@                  	 @                  
+ 0@                   
+@                   0
+@                   0@                   ¨@                   ¸@                   p#@                   Ø#@                   X%`                   h%`                   x%`                   €%`                   '`                   '`                   ((`                   0(`                                        \@                 ñÿ                     X%`             *     h%`             8     x%`             E     €@             [     0(`            j     8(`            x     ğ@                 ñÿ                „     `%`             ‘     P%@             Ÿ     x%`             «     p@             Á    ñÿ                È     '`             Ş      T%`             ï      T%`                 €%`                  ((`                                  *    °@            :    0@             A                     T                     g                      v                      Š                     œ                     ·                     É    ¨@             Ï   `@            ×                     ì                     ş                                          1                     E    }@     ¥      M   P@            T  " P@            Y    ¸@            h                     {                         ((`             œ                     ±                     Æ                     Û                     ğ    @     ¨      ÷    }@     .      ş                        À@                 @     L       +                     >                     R   p%`             _    À@     ‰       o                                          —   ñÿ,(`             £                     ·    "@     [      ¾                     Ò   ñÿ@(`             ×                     í  " `@            ó                         «@     V         ñÿ,(`                                  /                     B                     X                     j                     |    `@               
+@              call_gmon_start crtstuff.c __CTOR_LIST__ __DTOR_LIST__ __JCR_LIST__ __do_global_dtors_aux completed.6349 dtor_idx.6351 frame_dummy __CTOR_END__ __FRAME_END__ __JCR_END__ __do_global_ctors_aux myar.c _GLOBAL_OFFSET_TABLE_ __init_array_end __init_array_start _DYNAMIC data_start printf@@GLIBC_2.2.5 __libc_csu_fini _start close@@GLIBC_2.2.5 utime@@GLIBC_2.2.5 __gmon_start__ _Jv_RegisterClasses puts@@GLIBC_2.2.5 __isoc99_sscanf@@GLIBC_2.7 exit@@GLIBC_2.2.5 _fini __fstat putchar@@GLIBC_2.2.5 read@@GLIBC_2.2.5 malloc@@GLIBC_2.2.5 __libc_start_main@@GLIBC_2.2.5 unlink@@GLIBC_2.2.5 ar_list __stat stat _IO_stdin_used creat@@GLIBC_2.2.5 strlen@@GLIBC_2.2.5 __data_start opendir@@GLIBC_2.2.5 __xstat@@GLIBC_2.2.5 readdir@@GLIBC_2.2.5 sprintf@@GLIBC_2.2.5 ar_del ar_app strcat@@GLIBC_2.2.5 __dso_handle print_usage lseek@@GLIBC_2.2.5 strtol@@GLIBC_2.2.5 __DTOR_END__ __libc_csu_init atoi@@GLIBC_2.2.5 __fxstat@@GLIBC_2.2.5 __bss_start strcmp@@GLIBC_2.2.5 ar_ext strcpy@@GLIBC_2.2.5 _end difftime@@GLIBC_2.2.5 fstat access@@GLIBC_2.2.5 ar_appall _edata localtime@@GLIBC_2.2.5 write@@GLIBC_2.2.5 strftime@@GLIBC_2.2.5 open@@GLIBC_2.2.5 time@@GLIBC_2.2.5 main _init 
+ggggg/          1477069528  21760 88    100644  16204     `
+!<arch>
+myar/           1477069457  21760 88    100755  16135     `
+ELF          >    0@     @       X)          @ 8  @         @       @ @     @ @     À      À                           @      @                                          @       @     T%      T%                    X%      X%`     X%`     Ô      è                    €%      €%`     €%`                                    @     @     D       D              Påtd   p#      p#@     p#@     d       d              Qåtd                                                  /lib64/ld-linux-x86-64.so.2          GNU                       GNU NGp:éÂzùòbj¢ÊŞJíÓu                                                     /                                            »                                             F                      6                      !                      R                      q                      |                      Ï                      K                      ’                      j                      Š                      ç                      &                      .                      ƒ                      v                      c                      ˜                      ï                      È                                            ²                      Á                      ¨                      á                      Z                      £                      ¶                       __gmon_start__ libc.so.6 strcpy exit readdir sprintf __isoc99_sscanf puts unlink putchar strftime strtol strlen read lseek malloc strcat opendir creat atoi close open localtime difftime utime access strcmp __libc_start_main write __xstat __fxstat GLIBC_2.7 GLIBC_2.2.5                                                ii   ø      ui	         '`                   0'`                   8'`                   @'`                   H'`                   P'`                   X'`                   `'`                   h'`        	           p'`        
+           x'`                   €'`                   ˆ'`                   '`                   ˜'`                    '`                   ¨'`                   °'`                   ¸'`                   À'`                   È'`                   Ğ'`                   Ø'`                   à'`                   è'`                   ğ'`                   ø'`                    (`                   (`                   (`                   (`                    (`                    Hƒìè;  èÊ  èE  HƒÄÃÿ5ê  ÿ%ì  @ ÿ%ê  h    éàÿÿÿÿ%â  h   éĞÿÿÿÿ%Ú  h   éÀÿÿÿÿ%Ò  h   é°ÿÿÿÿ%Ê  h   é ÿÿÿÿ%Â  h   éÿÿÿÿ%º  h   é€ÿÿÿÿ%²  h   épÿÿÿÿ%ª  h   é`ÿÿÿÿ%¢  h	   éPÿÿÿÿ%š  h
+   é@ÿÿÿÿ%’  h   é0ÿÿÿÿ%Š  h   é ÿÿÿÿ%‚  h   éÿÿÿÿ%z  h   é ÿÿÿÿ%r  h   éğşÿÿÿ%j  h   éàşÿÿÿ%b  h   éĞşÿÿÿ%Z  h   éÀşÿÿÿ%R  h   é°şÿÿÿ%J  h   é şÿÿÿ%B  h   éşÿÿÿ%:  h   é€şÿÿÿ%2  h   épşÿÿÿ%*  h   é`şÿÿÿ%"  h   éPşÿÿÿ%  h   é@şÿÿÿ%  h   é0şÿÿÿ%
+  h   é şÿÿÿ%  h   éşÿÿÿ%ú  h   é şÿÿ1íI‰Ñ^H‰âHƒäğPTIÇÀ°@ HÇÁÀ@ HÇÇ`@ èwşÿÿôHƒìH‹©  H…ÀtÿĞHƒÄÃUH‰åSHƒì€=    uK»p%` H‹š  Hëh%` HÁûHƒëH9Øs$fD  HƒÀH‰u  ÿÅh%` H‹g  H9ØrâÆS  HƒÄ[ÉÃfff.„     Hƒ=€   UH‰åt¸    H…Àt¿x%` ÉÿàÉÃUH‰å¿È@ èNıÿÿ¿è@ èDıÿÿ¿@ è:ıÿÿ¿(@ è0ıÿÿ¿`@ è&ıÿÿ¿˜@ èıÿÿ¿À@ èıÿÿÉÃUH‰åHƒì@‰}ÌH‰uÀƒ}Ì¸    è•ÿÿÿ¿   èıÿÿH‹EÀHƒÀH‹ ¶ ˆEçH‹EÀHƒÀH‹ H‰Eè€}çq”Â€}çx”À	Ğ¶Ğ€}çt”À¶À	Â€}çv”À¶À	Â€}çd”À¶À	Â€}çA”À¶À	Ğ…Àu¸    èÿÿÿ¿   èŒüÿÿH‹Eè¾    H‰Çè»ıÿÿƒøÿtfH‹Eè¾   H‰Ç¸    èàıÿÿ‰EüÆEØ HMĞ‹Eüº   H‰Î‰ÇècüÿÿHEĞ¾D @ H‰ÇèBıÿÿ…Àt|¿M @ èüÿÿ‹Eü‰ÇèÚûÿÿ¿ÿÿÿÿèüÿÿ€}çqt€}çAu>H‹Eèº¶  ¾B   H‰Ç¸    èiıÿÿ‰Eü¿p @ è¼ûÿÿ‹Eüº   ¾D @ ‰Çè(ıÿÿë¿¨ @ èœûÿÿ¿ÿÿÿÿè²ûÿÿ¾EçƒèAƒø7‡ƒ   ‰ÀH‹ÅĞ @ ÿà‹Eü¾    ‰Çèt   ëp‹Eü¾   ‰Çèc   ë_H‹UÀ‹MÌ‹Eü‰Î‰ÇèN  ëJH‹UÀ‹MÌ‹Eü‰Î‰ÇèŞ  ë5H‹UÀ‹MÌ‹Eü‰Î‰ÇèR	  ë H‹UÀ‹MÌ‹Eü‰Î‰Çè“
+  ë
+¿ÿÿÿÿèûÿÿÉÃUH‰åHìğ   ‰½ÿÿÿ‰µÿÿÿ¿<   è"ûÿÿH‰EÈéI  H‹EÈHƒÀ0º
+   ¾    H‰Çè¯ûÿÿ‰EÔÇEĞ   ë$‹EĞH‹UÈH˜¶</u‹EĞH‹UÈH˜Æ ë
+ƒmĞƒ}Ğ Öƒ½ÿÿÿ uH‹EÈH‰Çèdúÿÿé¶  ÇEä   éÎ   ‹EäH‹UÈH˜¶D(¾Àƒè0‰Eğ‹Eğ‰ÂÁúÁêĞƒà)Ğ‰Eô‹Eğ‰ÂÁêÑø‰Eğ‹Eğ‰ÂÁúÁêĞƒà)Ğ‰Eø‹Eğ‰ÂÁêÑø‰Eğ‹Eğ‰ÂÁúÁêĞƒà)Ğ‰Eüƒ}ü t¿r   èıùÿÿë
+¿-   èñùÿÿƒ}ø t¿w   èáùÿÿë
+¿-   èÕùÿÿƒ}ô t¿x   èÅùÿÿë
+¿-   è¹ùÿÿƒEäƒ}ä(ÿÿÿH‹EÈHƒÀH‰Çè{úÿÿ‰EèH‹EÈHƒÀ"H‰Çèhúÿÿ‰Eì¸"@ ‹Uì‹Mè‰ÎH‰Ç¸    èùÿÿ¸š"@ ‹UÔ‰ÖH‰Ç¸    èôøÿÿH‹EÈHƒÀº
+   ¾    H‰Çè
+úÿÿH‰EÀHEÀH‰ÇèjúÿÿH‰Áº"@ H… ÿÿÿ¾   H‰Çènúÿÿ¸ª"@ H• ÿÿÿH‰ÖH‰Ç¸    è’øÿÿH‹UÈ¸°"@ H‰ÖH‰Ç¸    èyøÿÿ‹EÔƒà„ÀtƒEÔ‹EÔHcÈ‹…ÿÿÿº   H‰Î‰ÇèpùÿÿH‹MÈ‹…ÿÿÿº<   H‰Î‰Çè§øÿÿHƒø<„”ıÿÿ‹…ÿÿÿ‰Çè0øÿÿÉÃUH‰åSHƒìx‰}Œ‰uˆH‰U€¿<   èøÿÿH‰E¨¸·"@ ‹Uˆ‰ÖH‰Ç¸    èæ÷ÿÿÇE¤   éû  H‰àH‰Ã‹E¤H˜HÁàHE€H‹¸»"@ H‰ÖH‰Ç¸    è¯÷ÿÿÇE´    éÖ   ÇEì   ë$‹EìH‹U¨H˜¶</u‹EìH‹U¨H˜Æ ë
+ƒmìƒ}ì yÖH‹E¨HƒÀ0º
+   ¾    H‰Çè†øÿÿ‰E°‹E¤H˜HÁàHE€H‹H‹E¨H‰ÖH‰Çè”øÿÿ…ÀtA‹E°ƒà„ÀtƒE°‹E°HcÈ‹EŒº   H‰Î‰Çè*øÿÿH‹U¨¸Ç"@ H‰ÖH‰Ç¸    èñöÿÿë"ÇE´   H‹U¨¸Ö"@ H‰ÖH‰Ç¸    èÏöÿÿë H‹M¨‹EŒº<   H‰Î‰Çè'÷ÿÿHƒø<„
+ÿÿÿƒ}´ u¿à"@ èÍöÿÿ¿ÿÿÿÿèãöÿÿ¿   è	÷ÿÿH‰E¸¹#@ H‹E¨HƒÀ(H‹UÀH‰ÎH‰Ç¸    è¤öÿÿH‹E¨HƒÀº
+   ¾    H‰Çèz÷ÿÿH‰EÈH‹E¸H‹UÈH‰H‹E¸H‹UÈH‰PH‹EÀ‹H‹E¨HH(¸#@ H‰ÎH‰Ç¸    èöÿÿH‹EÀ‹ ‰ÂH‹E¨‰ÖH‰Çè¦öÿÿ‰EÔ¿   èiöÿÿH‰EØH‹UØ‹EÔH‰Ö‰Çèô	  H‹EØH‹@@‰Eà‹EàHcĞHƒêH‰UH˜HÁàHƒÀHƒÀHÁèHÁàH)ÄH‰àHƒÀHÁèHÁàH‰E˜‹E°‰Eäë7‹EàHcĞH‹M˜‹EŒH‰Î‰Çèàõÿÿ‰Eè‹EèHcĞH‹M˜‹EÔH‰Î‰Çè÷ÿÿ‹Eè)Eä‹Eä;EàÁ‹EäHcĞH‹M˜‹EŒH‰Î‰Çè¡õÿÿ‰Eè‹EèHcĞH‹M˜‹EÔH‰Î‰ÇèÇöÿÿ‹EÔ‰ÇèõÿÿH‹E¨H‹U¸H‰ÖH‰Çèõÿÿ‹EŒº   ¾    ‰ÇèöÿÿH‰ÜƒE¤‹E¤;EˆŒùüÿÿ‹EŒ‰ÇèÙôÿÿH‹]øÉÃUH‰åSHƒìx‰}Œ‰uˆH‰U€‹Eˆƒè‰E¸‹EŒº   ¾    ‰Çè³õÿÿÇE¼   éÒ  H‰àH‰Ã‹E¼H˜HÁàHE€H‹ H‰EÀ¿<   èãôÿÿH‰EĞ¿   èÕôÿÿH‰EØH‹EÀ¾    H‰Ç¸    èöÿÿ‰EÌƒ}Ìÿu(¿#@ èXôÿÿ‹EÌ‰Çè.ôÿÿ‹EŒ‰Çè$ôÿÿ¿ÿÿÿÿèZôÿÿH‹UØ‹EÌH‰Ö‰Çè  H‹EØH‹@8‰EäH‹EÀH‰Çè¢ôÿÿHƒÀH‰ÂHƒêH‰U˜HƒÀHƒÀHÁèHÁàH)ÄH‰àHƒÀHÁèHÁàH‰E H‹UÀH‹E H‰ÖH‰Çè
+õÿÿº7#@ H‹E H‰ÖH‰Çè–ôÿÿH‹U ¹9#@ H‹EĞH‰ÎH‰Ç¸    èiôÿÿH‹EØH‹@X‰Â¸?#@ H‹MĞHƒÁH‰ÆH‰Ï¸    èBôÿÿH‹EØ‹@‰Â¸E#@ H‹MĞHƒÁH‰ÆH‰Ï¸    èôÿÿH‹EØ‹@ ‰Â¸E#@ H‹MĞHƒÁ"H‰ÆH‰Ï¸    èöóÿÿH‹EØ‹P¸J#@ H‹MĞHƒÁ(H‰ÆH‰Ï¸    èÒóÿÿH‹EØH‹@0‰Â¸O#@ H‹MĞHƒÁ0H‰ÆH‰Ï¸    è«óÿÿ¸U#@ H‹UĞHJ:ºZ#@ H‰ÆH‰Ï¸    è‰óÿÿH‹MĞ‹EŒº<   H‰Î‰Çè#ôÿÿH‹EØH‹@@‰Eè‹EèHcĞHƒêH‰U¨H˜HÁàHƒÀHƒÀHÁèHÁàH)ÄH‰àHƒÀHÁèHÁàH‰E°ë‹EìHcĞH‹M°‹EŒH‰Î‰ÇèÅóÿÿ‹EèHcĞH‹M°‹EÌH‰Î‰Çènòÿÿ‰Eìƒ}ì uÉ‹EŒº   ¾    ‰Çèóÿÿƒà„Àt‹EŒº   ¾]#@ ‰Çèvóÿÿ‹EÌ‰ÇèÌñÿÿH‰ÜƒE¼‹E¼;EˆŒ"ıÿÿ‹EŒ‰Çè¯ñÿÿ¿    èåñÿÿUH‰åSHìÈ8 ‰½<Çşÿ‰µ8ÇşÿH‰•0ÇşÿÇEÄ    ¿_#@ è5òÿÿH‰EÈH‹…0ÇşÿH‹ H‰…@ÇşÿHÇ…HÇşÿb#@ H‹…0ÇşÿHƒÀH‹ H‰…PÇşÿÇEÜ   é§   H‹EĞ¶@<…—   H‹…0ÇşÿHƒÀH‹ H‹UĞHƒÂH‰ÆH‰×èSòÿÿ…ÀtrH‹EĞHƒÀH‰Eà¿   èYñÿÿH‰EèH‹EàH‹UèH‰ÖH‰ÇèÒ  H‹EèH‹XX¿    èòÿÿH‰ŞH‰Çè%òÿÿòÅ	  f.È“À„ÀtƒEÜ‹EÜH˜H‹UàH‰”Å@ÇşÿH‹EÈH‰ÇèañÿÿH‰EĞHƒ}Ğ …>ÿÿÿH•@Çşÿ‹MÜ‹…<Çşÿ‰Î‰Çè†ûÿÿHÄÈ8 [ÉÃUH‰åSHƒìx‰}Œ‰uˆH‰U€‹EˆƒèHcĞHƒêH‰UH˜HÁàHƒÀHƒÀHÁèHÁàH)ÄH‰àHƒÀHÁèHÁàH‰E˜‹Eˆƒè‰E°¿   è\ğÿÿH‰E¸ÇE´    ë&‹U´‹E´H˜HƒÀHÁàHE€H‹H‹E˜HcÒH‰ĞƒE´‹Eˆƒè;E´ÏH‹E€HƒÀH‹ H‰Çè+ğÿÿH‹E€HƒÀH‹ º¶  ¾B   H‰Ç¸    è9ñÿÿ‰EÀ‹EÀº   ¾D @ ‰ÇèñÿÿH‹U¸‹EÀH‰Ö‰Çèa  H‹E¸H‹@@‰EÄ¿<   è¬ïÿÿH‰EÈéN  ¿   è™ïÿÿH‰EĞH‹UÈ¹9#@ H‹EĞH‰ÎH‰Ç¸    èøïÿÿÇEÜ   ë"‹EÜH˜HEĞ¶ </u‹EÜH˜HEĞÆ  ë
+ƒmÜƒ}Ü yØÇEà    ÇEÜ    ë@‹UÜH‹E˜HcÒH‹ĞH‹EĞH‰ÖH‰Çèúïÿÿ…ÀuÇEà   ‹UÜH‹E˜HcÒHÇĞ]#@ ëƒEÜ‹Eˆƒè;EÜµH‹EÈHƒÀ0º
+   ¾    H‰Çè‚ïÿÿ‰Eäƒ}à …1  H‰àH‰ÃH‹MÈ‹EÀº<   H‰Î‰ÇèÙïÿÿ‹EÄHcĞHƒêH‰U H˜HÁàHƒÀHƒÀHÁèHÁàH)ÄH‰àHƒÀHÁèHÁàH‰E¨‹Eä‰Eèë7‹EÄHcĞH‹M¨‹EŒH‰Î‰Çè@îÿÿ‰Eì‹EìHcĞH‹M¨‹EÀH‰Î‰Çèfïÿÿ‹Eì)Eè‹Eè;EÄÁ‹EèHcĞH‹M¨‹EŒH‰Î‰Çèîÿÿ‰Eì‹EìHcĞH‹M¨‹EÀH‰Î‰Çè'ïÿÿ‹EÀº   ¾    ‰Çèƒîÿÿƒà„Àt‹EÀº   ¾]#@ ‰Çèøîÿÿ‹EŒº   ¾    ‰ÇèTîÿÿƒà„Àt‹EŒº   ¾   ‰Çè9îÿÿH‰Üë?‹Eäƒà„ÀtƒEä‹EäHcÈ‹EŒº   H‰Î‰ÇèîÿÿH‹UÈ¸Ç"@ H‰ÖH‰Ç¸    èÕìÿÿH‹MÈ‹EŒº<   H‰Î‰Çè/íÿÿHƒø<„’ıÿÿ‹EŒ‰Çè»ìÿÿ‹EÀ‰Çè±ìÿÿ¿    èçìÿÿóÃfffff.„     H‰l$ØL‰d$àH-ƒ  L%|  L‰l$èL‰t$ğL‰|$øH‰\$ĞHƒì8L)åA‰ıI‰öHÁıI‰×èìÿÿH…ít1Û@ L‰úL‰öD‰ïAÿÜHƒÃH9ërêH‹\$H‹l$L‹d$L‹l$ L‹t$(L‹|$0HƒÄ8ÃH‰òH‰ş¿   éÀìÿÿH‰ò‰ş¿   é!íÿÿUH‰åSHƒìH‹Ø  Hƒøÿt»X%` D  HƒëÿĞH‹HƒøÿuñHƒÄ[ÉÃHƒìèÏíÿÿHƒÄÃ                Usage: myar key afile name...   q	quickly append named files to archive x	extract named files   t	print a concise table of contents of the archive      v	print a verbose table of contents of the archive      d	delete named files from archive       A	quickly append all ordinary files in the current directory that have been modified within the last hour except the archive itself !<arch>
+ Error: File not recorgnized        Archive file not found; creating new archive file       Error: target archive file not exist    F@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     [@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     @     q@     q@     ú@     q@     @     q@     1@     %6d/%-6d  %d  %b %e %R %Y %-20s %-16s
+ %d
+ finding %s
+ going thru:%s
+ found %s
+ Error: file to extract not found. %o %s
+ %o
+    Error: Target file to append not found / %-16s %-12d %-6d %-8o %-10d %-2s `
+ 
+ ./ q           ¬@;d      ¤éÿÿ€   ğéÿÿ    ìÿÿÀ   ²îÿÿà   òÿÿ  ;õÿÿ(  ‘öÿÿP  @úÿÿp  Púÿÿˆ  àúÿÿ°  ğúÿÿÈ             zR x        éÿÿL    A†CG     <   Héÿÿ   A†C    \   Eëÿÿ¥   A†C  $   |   Êíÿÿ[   A†CTƒB         ¤   ığÿÿ.   A†Cgƒ    $   Ä   ôÿÿV   A†Cgƒ*         ì   9õÿÿ¨   A†CZƒ        Èøÿÿ           $   $  Àøÿÿ‰    QŒ†_@ƒX      L  (ùÿÿ              d   ùÿÿ                   ÿÿÿÿÿÿÿÿ        ÿÿÿÿÿÿÿÿ                                     
+@            ¨@     õşÿo    `@            ˜@            €@     
+                                                 '`            è                           0@            @                   	              şÿÿo    è@     ÿÿÿo           ğÿÿo    ¦@                                                                                                             €%`                     F
+@     V
+@     f
+@     v
+@     †
+@     –
+@     ¦
+@     ¶
+@     Æ
+@     Ö
+@     æ
+@     ö
+@     @     @     &@     6@     F@     V@     f@     v@     †@     –@     ¦@     ¶@     Æ@     Ö@     æ@     ö@     @     @     &@         GCC: (GNU) 4.4.7 20120313 (Red Hat 4.4.7-16)  .symtab .strtab .shstrtab .interp .note.ABI-tag .note.gnu.build-id .gnu.hash .dynsym .dynstr .gnu.version .gnu.version_r .rela.dyn .rela.plt .init .text .fini .rodata .eh_frame_hdr .eh_frame .ctors .dtors .jcr .dynamic .got .got.plt .data .bss .comment                                                                                @                                          #             @                                          1             <@     <      $                              D   öÿÿo       `@     `                                   N             €@     €                                V             ˜@     ˜                                   ^   ÿÿÿo       ¦@     ¦      B                            k   şÿÿo       è@     è      0                            z             @                                       „             0@     0      è                                       
+@     
+                                    ‰             0
+@     0
+                                   ”             0@     0      x                             š             ¨@     ¨                                                  ¸@     ¸      ¸                             ¨             p#@     p#      d                              ¶             Ø#@     Ø#      |                             À             X%`     X%                                    Ç             h%`     h%                                    Î             x%`     x%                                    Ó             €%`     €%                                 Ü             '`     '                                   á             '`     '                                  ê             ((`     ((                                    ğ             0(`     ,(                                    õ      0               ,(      -                                                   Y(      ş                                                    Ø0      ¨	         .                 	                      €:      ‡                                                            @                   @                   <@                   `@                   €@                   ˜@                   ¦@                   è@                  	 @                  
+ 0@                   
+@                   0
+@                   0@                   ¨@                   ¸@                   p#@                   Ø#@                   X%`                   h%`                   x%`                   €%`                   '`                   '`                   ((`                   0(`                                        \@                 ñÿ                     X%`             *     h%`             8     x%`             E     €@             [     0(`            j     8(`            x     ğ@                 ñÿ                „     `%`             ‘     P%@             Ÿ     x%`             «     p@             Á    ñÿ                È     '`             Ş      T%`             ï      T%`                 €%`                  ((`                                  *    °@            :    0@             A                     T                     g                      v                      Š                     œ                     ·                     É    ¨@             Ï   `@            ×                     ì                     ş                                          1                     E    }@     ¥      M   P@            T  " P@            Y    ¸@            h                     {                         ((`             œ                     ±                     Æ                     Û                     ğ    @     ¨      ÷    }@     .      ş                        À@                 @     L       +                     >                     R   p%`             _    À@     ‰       o                                          —   ñÿ,(`             £                     ·    "@     [      ¾                     Ò   ñÿ@(`             ×                     í  " `@            ó                         «@     V         ñÿ,(`                                  /                     B                     X                     j                     |    `@               
+@              call_gmon_start crtstuff.c __CTOR_LIST__ __DTOR_LIST__ __JCR_LIST__ __do_global_dtors_aux completed.6349 dtor_idx.6351 frame_dummy __CTOR_END__ __FRAME_END__ __JCR_END__ __do_global_ctors_aux myar.c _GLOBAL_OFFSET_TABLE_ __init_array_end __init_array_start _DYNAMIC data_start printf@@GLIBC_2.2.5 __libc_csu_fini _start close@@GLIBC_2.2.5 utime@@GLIBC_2.2.5 __gmon_start__ _Jv_RegisterClasses puts@@GLIBC_2.2.5 __isoc99_sscanf@@GLIBC_2.7 exit@@GLIBC_2.2.5 _fini __fstat putchar@@GLIBC_2.2.5 read@@GLIBC_2.2.5 malloc@@GLIBC_2.2.5 __libc_start_main@@GLIBC_2.2.5 unlink@@GLIBC_2.2.5 ar_list __stat stat _IO_stdin_used creat@@GLIBC_2.2.5 strlen@@GLIBC_2.2.5 __data_start opendir@@GLIBC_2.2.5 __xstat@@GLIBC_2.2.5 readdir@@GLIBC_2.2.5 sprintf@@GLIBC_2.2.5 ar_del ar_app strcat@@GLIBC_2.2.5 __dso_handle print_usage lseek@@GLIBC_2.2.5 strtol@@GLIBC_2.2.5 __DTOR_END__ __libc_csu_init atoi@@GLIBC_2.2.5 __fxstat@@GLIBC_2.2.5 __bss_start strcmp@@GLIBC_2.2.5 ar_ext strcpy@@GLIBC_2.2.5 _end difftime@@GLIBC_2.2.5 fstat access@@GLIBC_2.2.5 ar_appall _edata localtime@@GLIBC_2.2.5 write@@GLIBC_2.2.5 strftime@@GLIBC_2.2.5 open@@GLIBC_2.2.5 time@@GLIBC_2.2.5 main _init 
+myar/           1477069913  21760 88    100755  16135     `
+ELF          >    0@     @       X)          @ 8  @         @       @ @     @ @     À      À                           @      @                                          @       @     T%      T%                    X%      X%`     X%`     Ô      è                    €%      €%`     €%`                                    @     @     D       D              Påtd   p#      p#@     p#@     d       d              Qåtd                                                  /lib64/ld-linux-x86-64.so.2          GNU                       GNU NGp:éÂzùòbj¢ÊŞJíÓu                                                     /                                            »                                             F                      6                      !                      R                      q                      |                      Ï                      K                      ’                      j                      Š                      ç                      &                      .                      ƒ                      v                      c                      ˜                      ï                      È                                            ²                      Á                      ¨                      á                      Z                      £                      ¶                       __gmon_start__ libc.so.6 strcpy exit readdir sprintf __isoc99_sscanf puts unlink putchar strftime strtol strlen read lseek malloc strcat opendir creat atoi close open localtime difftime utime access strcmp __libc_start_main write __xstat __fxstat GLIBC_2.7 GLIBC_2.2.5                                                ii   ø      ui	         '`                   0'`                   8'`                   @'`                   H'`                   P'`                   X'`                   `'`                   h'`        	           p'`        
+           x'`                   €'`                   ˆ'`                   '`                   ˜'`                    '`                   ¨'`                   °'`                   ¸'`                   À'`                   È'`                   Ğ'`                   Ø'`                   à'`                   è'`                   ğ'`                   ø'`                    (`                   (`                   (`                   (`                    (`                    Hƒìè;  èÊ  èE  HƒÄÃÿ5ê  ÿ%ì  @ ÿ%ê  h    éàÿÿÿÿ%â  h   éĞÿÿÿÿ%Ú  h   éÀÿÿÿÿ%Ò  h   é°ÿÿÿÿ%Ê  h   é ÿÿÿÿ%Â  h   éÿÿÿÿ%º  h   é€ÿÿÿÿ%²  h   épÿÿÿÿ%ª  h   é`ÿÿÿÿ%¢  h	   éPÿÿÿÿ%š  h
+   é@ÿÿÿÿ%’  h   é0ÿÿÿÿ%Š  h   é ÿÿÿÿ%‚  h   éÿÿÿÿ%z  h   é ÿÿÿÿ%r  h   éğşÿÿÿ%j  h   éàşÿÿÿ%b  h   éĞşÿÿÿ%Z  h   éÀşÿÿÿ%R  h   é°şÿÿÿ%J  h   é şÿÿÿ%B  h   éşÿÿÿ%:  h   é€şÿÿÿ%2  h   épşÿÿÿ%*  h   é`şÿÿÿ%"  h   éPşÿÿÿ%  h   é@şÿÿÿ%  h   é0şÿÿÿ%
+  h   é şÿÿÿ%  h   éşÿÿÿ%ú  h   é şÿÿ1íI‰Ñ^H‰âHƒäğPTIÇÀ°@ HÇÁÀ@ HÇÇ`@ èwşÿÿôHƒìH‹©  H…ÀtÿĞHƒÄÃUH‰åSHƒì€=    uK»p%` H‹š  Hëh%` HÁûHƒëH9Øs$fD  HƒÀH‰u  ÿÅh%` H‹g  H9ØrâÆS  HƒÄ[ÉÃfff.„     Hƒ=€   UH‰åt¸    H…Àt¿x%` ÉÿàÉÃUH‰å¿È@ èNıÿÿ¿è@ èDıÿÿ¿@ è:ıÿÿ¿(@ è0ıÿÿ¿`@ è&ıÿÿ¿˜@ èıÿÿ¿À@ èıÿÿÉÃUH‰åHƒì@‰}ÌH‰uÀƒ}Ì¸    è•ÿÿÿ¿   èıÿÿH‹EÀHƒÀH‹ ¶ ˆEçH‹EÀHƒÀH‹ H‰Eè€}çq”Â€}çx”À	Ğ¶Ğ€}çt”À¶À	Â€}çv”À¶À	Â€}çd”À¶À	Â€}çA”À¶À	Ğ…Àu¸    èÿÿÿ¿   èŒüÿÿH‹Eè¾    H‰Çè»ıÿÿƒøÿtfH‹Eè¾   H‰Ç¸    èàıÿÿ‰EüÆEØ HMĞ‹Eüº   H‰Î‰ÇècüÿÿHEĞ¾D @ H‰ÇèBıÿÿ…Àt|¿M @ èüÿÿ‹Eü‰ÇèÚûÿÿ¿ÿÿÿÿèüÿÿ€}çqt€}çAu>H‹Eèº¶  ¾B   H‰Ç¸    èiıÿÿ‰Eü¿p @ è¼ûÿÿ‹Eüº   ¾D @ ‰Çè(ıÿÿë¿¨ @ èœûÿÿ¿ÿÿÿÿè²ûÿÿ¾EçƒèAƒø7‡ƒ   ‰ÀH‹ÅĞ @ ÿà‹Eü¾    ‰Çèt   ëp‹Eü¾   ‰Çèc   ë_H‹UÀ‹MÌ‹Eü‰Î‰ÇèN  ëJH‹UÀ‹MÌ‹Eü‰Î‰ÇèŞ  ë5H‹UÀ‹MÌ‹Eü‰Î‰ÇèR	  ë H‹UÀ‹MÌ‹Eü‰Î‰Çè“
+  ë
+¿ÿÿÿÿèûÿÿÉÃUH‰åHìğ   ‰½ÿÿÿ‰µÿÿÿ¿<   è"ûÿÿH‰EÈéI  H‹EÈHƒÀ0º
+   ¾    H‰Çè¯ûÿÿ‰EÔÇEĞ   ë$‹EĞH‹UÈH˜¶</u‹EĞH‹UÈH˜Æ ë
+ƒmĞƒ}Ğ Öƒ½ÿÿÿ uH‹EÈH‰Çèdúÿÿé¶  ÇEä   éÎ   ‹EäH‹UÈH˜¶D(¾Àƒè0‰Eğ‹Eğ‰ÂÁúÁêĞƒà)Ğ‰Eô‹Eğ‰ÂÁêÑø‰Eğ‹Eğ‰ÂÁúÁêĞƒà)Ğ‰Eø‹Eğ‰ÂÁêÑø‰Eğ‹Eğ‰ÂÁúÁêĞƒà)Ğ‰Eüƒ}ü t¿r   èıùÿÿë
+¿-   èñùÿÿƒ}ø t¿w   èáùÿÿë
+¿-   èÕùÿÿƒ}ô t¿x   èÅùÿÿë
+¿-   è¹ùÿÿƒEäƒ}ä(ÿÿÿH‹EÈHƒÀH‰Çè{úÿÿ‰EèH‹EÈHƒÀ"H‰Çèhúÿÿ‰Eì¸"@ ‹Uì‹Mè‰ÎH‰Ç¸    èùÿÿ¸š"@ ‹UÔ‰ÖH‰Ç¸    èôøÿÿH‹EÈHƒÀº
+   ¾    H‰Çè
+úÿÿH‰EÀHEÀH‰ÇèjúÿÿH‰Áº"@ H… ÿÿÿ¾   H‰Çènúÿÿ¸ª"@ H• ÿÿÿH‰ÖH‰Ç¸    è’øÿÿH‹UÈ¸°"@ H‰ÖH‰Ç¸    èyøÿÿ‹EÔƒà„ÀtƒEÔ‹EÔHcÈ‹…ÿÿÿº   H‰Î‰ÇèpùÿÿH‹MÈ‹…ÿÿÿº<   H‰Î‰Çè§øÿÿHƒø<„”ıÿÿ‹…ÿÿÿ‰Çè0øÿÿÉÃUH‰åSHƒìx‰}Œ‰uˆH‰U€¿<   èøÿÿH‰E¨¸·"@ ‹Uˆ‰ÖH‰Ç¸    èæ÷ÿÿÇE¤   éû  H‰àH‰Ã‹E¤H˜HÁàHE€H‹¸»"@ H‰ÖH‰Ç¸    è¯÷ÿÿÇE´    éÖ   ÇEì   ë$‹EìH‹U¨H˜¶</u‹EìH‹U¨H˜Æ ë
+ƒmìƒ}ì yÖH‹E¨HƒÀ0º
+   ¾    H‰Çè†øÿÿ‰E°‹E¤H˜HÁàHE€H‹H‹E¨H‰ÖH‰Çè”øÿÿ…ÀtA‹E°ƒà„ÀtƒE°‹E°HcÈ‹EŒº   H‰Î‰Çè*øÿÿH‹U¨¸Ç"@ H‰ÖH‰Ç¸    èñöÿÿë"ÇE´   H‹U¨¸Ö"@ H‰ÖH‰Ç¸    èÏöÿÿë H‹M¨‹EŒº<   H‰Î‰Çè'÷ÿÿHƒø<„
+ÿÿÿƒ}´ u¿à"@ èÍöÿÿ¿ÿÿÿÿèãöÿÿ¿   è	÷ÿÿH‰E¸¹#@ H‹E¨HƒÀ(H‹UÀH‰ÎH‰Ç¸    è¤öÿÿH‹E¨HƒÀº
+   ¾    H‰Çèz÷ÿÿH‰EÈH‹E¸H‹UÈH‰H‹E¸H‹UÈH‰PH‹EÀ‹H‹E¨HH(¸#@ H‰ÎH‰Ç¸    èöÿÿH‹EÀ‹ ‰ÂH‹E¨‰ÖH‰Çè¦öÿÿ‰EÔ¿   èiöÿÿH‰EØH‹UØ‹EÔH‰Ö‰Çèô	  H‹EØH‹@@‰Eà‹EàHcĞHƒêH‰UH˜HÁàHƒÀHƒÀHÁèHÁàH)ÄH‰àHƒÀHÁèHÁàH‰E˜‹E°‰Eäë7‹EàHcĞH‹M˜‹EŒH‰Î‰Çèàõÿÿ‰Eè‹EèHcĞH‹M˜‹EÔH‰Î‰Çè÷ÿÿ‹Eè)Eä‹Eä;EàÁ‹EäHcĞH‹M˜‹EŒH‰Î‰Çè¡õÿÿ‰Eè‹EèHcĞH‹M˜‹EÔH‰Î‰ÇèÇöÿÿ‹EÔ‰ÇèõÿÿH‹E¨H‹U¸H‰ÖH‰Çèõÿÿ‹EŒº   ¾    ‰ÇèöÿÿH‰ÜƒE¤‹E¤;EˆŒùüÿÿ‹EŒ‰ÇèÙôÿÿH‹]øÉÃUH‰åSHƒìx‰}Œ‰uˆH‰U€‹Eˆƒè‰E¸‹EŒº   ¾    ‰Çè³õÿÿÇE¼   éÒ  H‰àH‰Ã‹E¼H˜HÁàHE€H‹ H‰EÀ¿<   èãôÿÿH‰EĞ¿   èÕôÿÿH‰EØH‹EÀ¾    H‰Ç¸    èöÿÿ‰EÌƒ}Ìÿu(¿#@ èXôÿÿ‹EÌ‰Çè.ôÿÿ‹EŒ‰Çè$ôÿÿ¿ÿÿÿÿèZôÿÿH‹UØ‹EÌH‰Ö‰Çè  H‹EØH‹@8‰EäH‹EÀH‰Çè¢ôÿÿHƒÀH‰ÂHƒêH‰U˜HƒÀHƒÀHÁèHÁàH)ÄH‰àHƒÀHÁèHÁàH‰E H‹UÀH‹E H‰ÖH‰Çè
+õÿÿº7#@ H‹E H‰ÖH‰Çè–ôÿÿH‹U ¹9#@ H‹EĞH‰ÎH‰Ç¸    èiôÿÿH‹EØH‹@X‰Â¸?#@ H‹MĞHƒÁH‰ÆH‰Ï¸    èBôÿÿH‹EØ‹@‰Â¸E#@ H‹MĞHƒÁH‰ÆH‰Ï¸    èôÿÿH‹EØ‹@ ‰Â¸E#@ H‹MĞHƒÁ"H‰ÆH‰Ï¸    èöóÿÿH‹EØ‹P¸J#@ H‹MĞHƒÁ(H‰ÆH‰Ï¸    èÒóÿÿH‹EØH‹@0‰Â¸O#@ H‹MĞHƒÁ0H‰ÆH‰Ï¸    è«óÿÿ¸U#@ H‹UĞHJ:ºZ#@ H‰ÆH‰Ï¸    è‰óÿÿH‹MĞ‹EŒº<   H‰Î‰Çè#ôÿÿH‹EØH‹@@‰Eè‹EèHcĞHƒêH‰U¨H˜HÁàHƒÀHƒÀHÁèHÁàH)ÄH‰àHƒÀHÁèHÁàH‰E°ë‹EìHcĞH‹M°‹EŒH‰Î‰ÇèÅóÿÿ‹EèHcĞH‹M°‹EÌH‰Î‰Çènòÿÿ‰Eìƒ}ì uÉ‹EŒº   ¾    ‰Çèóÿÿƒà„Àt‹EŒº   ¾]#@ ‰Çèvóÿÿ‹EÌ‰ÇèÌñÿÿH‰ÜƒE¼‹E¼;EˆŒ"ıÿÿ‹EŒ‰Çè¯ñÿÿ¿    èåñÿÿUH‰åSHìÈ8 ‰½<Çşÿ‰µ8ÇşÿH‰•0ÇşÿÇEÄ    ¿_#@ è5òÿÿH‰EÈH‹…0ÇşÿH‹ H‰…@ÇşÿHÇ…HÇşÿb#@ H‹…0ÇşÿHƒÀH‹ H‰…PÇşÿÇEÜ   é§   H‹EĞ¶@<…—   H‹…0ÇşÿHƒÀH‹ H‹UĞHƒÂH‰ÆH‰×èSòÿÿ…ÀtrH‹EĞHƒÀH‰Eà¿   èYñÿÿH‰EèH‹EàH‹UèH‰ÖH‰ÇèÒ  H‹EèH‹XX¿    èòÿÿH‰ŞH‰Çè%òÿÿòÅ	  f.È“À„ÀtƒEÜ‹EÜH˜H‹UàH‰”Å@ÇşÿH‹EÈH‰ÇèañÿÿH‰EĞHƒ}Ğ …>ÿÿÿH•@Çşÿ‹MÜ‹…<Çşÿ‰Î‰Çè†ûÿÿHÄÈ8 [ÉÃUH‰åSHƒìx‰}Œ‰uˆH‰U€‹EˆƒèHcĞHƒêH‰UH˜HÁàHƒÀHƒÀHÁèHÁàH)ÄH‰àHƒÀHÁèHÁàH‰E˜‹Eˆƒè‰E°¿   è\ğÿÿH‰E¸ÇE´    ë&‹U´‹E´H˜HƒÀHÁàHE€H‹H‹E˜HcÒH‰ĞƒE´‹Eˆƒè;E´ÏH‹E€HƒÀH‹ H‰Çè+ğÿÿH‹E€HƒÀH‹ º¶  ¾B   H‰Ç¸    è9ñÿÿ‰EÀ‹EÀº   ¾D @ ‰ÇèñÿÿH‹U¸‹EÀH‰Ö‰Çèa  H‹E¸H‹@@‰EÄ¿<   è¬ïÿÿH‰EÈéN  ¿   è™ïÿÿH‰EĞH‹UÈ¹9#@ H‹EĞH‰ÎH‰Ç¸    èøïÿÿÇEÜ   ë"‹EÜH˜HEĞ¶ </u‹EÜH˜HEĞÆ  ë
+ƒmÜƒ}Ü yØÇEà    ÇEÜ    ë@‹UÜH‹E˜HcÒH‹ĞH‹EĞH‰ÖH‰Çèúïÿÿ…ÀuÇEà   ‹UÜH‹E˜HcÒHÇĞ]#@ ëƒEÜ‹Eˆƒè;EÜµH‹EÈHƒÀ0º
+   ¾    H‰Çè‚ïÿÿ‰Eäƒ}à …1  H‰àH‰ÃH‹MÈ‹EÀº<   H‰Î‰ÇèÙïÿÿ‹EÄHcĞHƒêH‰U H˜HÁàHƒÀHƒÀHÁèHÁàH)ÄH‰àHƒÀHÁèHÁàH‰E¨‹Eä‰Eèë7‹EÄHcĞH‹M¨‹EŒH‰Î‰Çè@îÿÿ‰Eì‹EìHcĞH‹M¨‹EÀH‰Î‰Çèfïÿÿ‹Eì)Eè‹Eè;EÄÁ‹EèHcĞH‹M¨‹EŒH‰Î‰Çèîÿÿ‰Eì‹EìHcĞH‹M¨‹EÀH‰Î‰Çè'ïÿÿ‹EÀº   ¾    ‰Çèƒîÿÿƒà„Àt‹EÀº   ¾]#@ ‰Çèøîÿÿ‹EŒº   ¾    ‰ÇèTîÿÿƒà„Àt‹EŒº   ¾   ‰Çè9îÿÿH‰Üë?‹Eäƒà„ÀtƒEä‹EäHcÈ‹EŒº   H‰Î‰ÇèîÿÿH‹UÈ¸Ç"@ H‰ÖH‰Ç¸    èÕìÿÿH‹MÈ‹EŒº<   H‰Î‰Çè/íÿÿHƒø<„’ıÿÿ‹EŒ‰Çè»ìÿÿ‹EÀ‰Çè±ìÿÿ¿    èçìÿÿóÃfffff.„     H‰l$ØL‰d$àH-ƒ  L%|  L‰l$èL‰t$ğL‰|$øH‰\$ĞHƒì8L)åA‰ıI‰öHÁıI‰×èìÿÿH…ít1Û@ L‰úL‰öD‰ïAÿÜHƒÃH9ërêH‹\$H‹l$L‹d$L‹l$ L‹t$(L‹|$0HƒÄ8ÃH‰òH‰ş¿   éÀìÿÿH‰ò‰ş¿   é!íÿÿUH‰åSHƒìH‹Ø  Hƒøÿt»X%` D  HƒëÿĞH‹HƒøÿuñHƒÄ[ÉÃHƒìèÏíÿÿHƒÄÃ                Usage: myar key afile name...   q	quickly append named files to archive x	extract named files   t	print a concise table of contents of the archive      v	print a verbose table of contents of the archive      d	delete named files from archive       A	quickly append all ordinary files in the current directory that have been modified within the last hour except the archive itself !<arch>
+ Error: File not recorgnized        Archive file not found; creating new archive file       Error: target archive file not exist    F@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     [@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     q@     @     q@     q@     ú@     q@     @     q@     1@     %6d/%-6d  %d  %b %e %R %Y %-20s %-16s
+ %d
+ finding %s
+ going thru:%s
+ found %s
+ Error: file to extract not found. %o %s
+ %o
+    Error: Target file to append not found / %-16s %-12d %-6d %-8o %-10d %-2s `
+ 
+ ./ q           ¬@;d      ¤éÿÿ€   ğéÿÿ    ìÿÿÀ   ²îÿÿà   òÿÿ  ;õÿÿ(  ‘öÿÿP  @úÿÿp  Púÿÿˆ  àúÿÿ°  ğúÿÿÈ             zR x        éÿÿL    A†CG     <   Héÿÿ   A†C    \   Eëÿÿ¥   A†C  $   |   Êíÿÿ[   A†CTƒB         ¤   ığÿÿ.   A†Cgƒ    $   Ä   ôÿÿV   A†Cgƒ*         ì   9õÿÿ¨   A†CZƒ        Èøÿÿ           $   $  Àøÿÿ‰    QŒ†_@ƒX      L  (ùÿÿ              d   ùÿÿ                   ÿÿÿÿÿÿÿÿ        ÿÿÿÿÿÿÿÿ                                     
+@            ¨@     õşÿo    `@            ˜@            €@     
+                                                 '`            è                           0@            @                   	              şÿÿo    è@     ÿÿÿo           ğÿÿo    ¦@                                                                                                             €%`                     F
+@     V
+@     f
+@     v
+@     †
+@     –
+@     ¦
+@     ¶
+@     Æ
+@     Ö
+@     æ
+@     ö
+@     @     @     &@     6@     F@     V@     f@     v@     †@     –@     ¦@     ¶@     Æ@     Ö@     æ@     ö@     @     @     &@         GCC: (GNU) 4.4.7 20120313 (Red Hat 4.4.7-16)  .symtab .strtab .shstrtab .interp .note.ABI-tag .note.gnu.build-id .gnu.hash .dynsym .dynstr .gnu.version .gnu.version_r .rela.dyn .rela.plt .init .text .fini .rodata .eh_frame_hdr .eh_frame .ctors .dtors .jcr .dynamic .got .got.plt .data .bss .comment                                                                                @                                          #             @                                          1             <@     <      $                              D   öÿÿo       `@     `                                   N             €@     €                                V             ˜@     ˜                                   ^   ÿÿÿo       ¦@     ¦      B                            k   şÿÿo       è@     è      0                            z             @                                       „             0@     0      è                                       
+@     
+                                    ‰             0
+@     0
+                                   ”             0@     0      x                             š             ¨@     ¨                                                  ¸@     ¸      ¸                             ¨             p#@     p#      d                              ¶             Ø#@     Ø#      |                             À             X%`     X%                                    Ç             h%`     h%                                    Î             x%`     x%                                    Ó             €%`     €%                                 Ü             '`     '                                   á             '`     '                                  ê             ((`     ((                                    ğ             0(`     ,(                                    õ      0               ,(      -                                                   Y(      ş                                                    Ø0      ¨	         .                 	                      €:      ‡                                                            @                   @                   <@                   `@                   €@                   ˜@                   ¦@                   è@                  	 @                  
+ 0@                   
+@                   0
+@                   0@                   ¨@                   ¸@                   p#@                   Ø#@                   X%`                   h%`                   x%`                   €%`                   '`                   '`                   ((`                   0(`                                        \@                 ñÿ                     X%`             *     h%`             8     x%`             E     €@             [     0(`            j     8(`            x     ğ@                 ñÿ                „     `%`             ‘     P%@             Ÿ     x%`             «     p@             Á    ñÿ                È     '`             Ş      T%`             ï      T%`                 €%`                  ((`                                  *    °@            :    0@             A                     T                     g                      v                      Š                     œ                     ·                     É    ¨@             Ï   `@            ×                     ì                     ş                                          1                     E    }@     ¥      M   P@            T  " P@            Y    ¸@            h                     {                         ((`             œ                     ±                     Æ                     Û                     ğ    @     ¨      ÷    }@     .      ş                        À@                 @     L       +                     >                     R   p%`             _    À@     ‰       o                                          —   ñÿ,(`             £                     ·    "@     [      ¾                     Ò   ñÿ@(`             ×                     í  " `@            ó                         «@     V         ñÿ,(`                                  /                     B                     X                     j                     |    `@               
+@              call_gmon_start crtstuff.c __CTOR_LIST__ __DTOR_LIST__ __JCR_LIST__ __do_global_dtors_aux completed.6349 dtor_idx.6351 frame_dummy __CTOR_END__ __FRAME_END__ __JCR_END__ __do_global_ctors_aux myar.c _GLOBAL_OFFSET_TABLE_ __init_array_end __init_array_start _DYNAMIC data_start printf@@GLIBC_2.2.5 __libc_csu_fini _start close@@GLIBC_2.2.5 utime@@GLIBC_2.2.5 __gmon_start__ _Jv_RegisterClasses puts@@GLIBC_2.2.5 __isoc99_sscanf@@GLIBC_2.7 exit@@GLIBC_2.2.5 _fini __fstat putchar@@GLIBC_2.2.5 read@@GLIBC_2.2.5 malloc@@GLIBC_2.2.5 __libc_start_main@@GLIBC_2.2.5 unlink@@GLIBC_2.2.5 ar_list __stat stat _IO_stdin_used creat@@GLIBC_2.2.5 strlen@@GLIBC_2.2.5 __data_start opendir@@GLIBC_2.2.5 __xstat@@GLIBC_2.2.5 readdir@@GLIBC_2.2.5 sprintf@@GLIBC_2.2.5 ar_del ar_app strcat@@GLIBC_2.2.5 __dso_handle print_usage lseek@@GLIBC_2.2.5 strtol@@GLIBC_2.2.5 __DTOR_END__ __libc_csu_init atoi@@GLIBC_2.2.5 __fxstat@@GLIBC_2.2.5 __bss_start strcmp@@GLIBC_2.2.5 ar_ext strcpy@@GLIBC_2.2.5 _end difftime@@GLIBC_2.2.5 fstat access@@GLIBC_2.2.5 ar_appall _edata localtime@@GLIBC_2.2.5 write@@GLIBC_2.2.5 strftime@@GLIBC_2.2.5 open@@GLIBC_2.2.5 time@@GLIBC_2.2.5 main _init 

@@ -1,0 +1,306 @@
+
+/* THIS CODE IS MY OWN WORK, IT WAS WRITTEN WITHOUT CONSULTING
+
+A TUTOR OR CODE WRITTEN BY OTHER STUDENTS - YIYANG ZHAO */
+
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <ctype.h>
+#include <unistd.h>
+#include <string.h>
+#include <sys/wait.h>
+
+#define PIPE_SIZE 4096
+
+#define PAR_PC 10
+#define SOR1_PC 20
+#define SOR2_PC 30
+#define SUR_PC 40
+
+int  main(int argc, char *argv[]){
+
+
+	int parse_sort[2][2];
+	int sort_merge[2][2];
+
+	int who_am_i;
+
+	pid_t this_pc;
+	pid_t parent_pc;
+	pid_t sorter_pc[2];
+	pid_t sup_pc;
+	pid_t temp_pc;
+
+	FILE * raw_flow[2];  // parsed , to be sorted
+	FILE * sorted_flow[2]; // sorted, to be suppressed	
+
+	parent_pc = getpid();
+
+	int i; 
+
+
+	// pipe and fork sorter
+
+	who_am_i = PAR_PC;
+
+	for (i=0;i<2;i++){
+
+		if (getpid() == parent_pc){
+			//pipe	* 2
+			if((pipe(parse_sort[i])<0)||(pipe(sort_merge[i]))) perror("pipe error, LOC 1");
+
+			//fork
+			sorter_pc[i] = fork();
+
+			//close proper end
+			if (getpid() == parent_pc){
+				//parent: close read end of parse_sort
+				close(parse_sort[i][0]);
+
+			} else{
+				//sort: close write end of parse_sort and readn end of sort_merge
+				close(parse_sort[i][1]);
+				close(sort_merge[i][0]);
+				dup2(parse_sort[i][0], STDIN_FILENO);
+				dup2(sort_merge[i][1], STDOUT_FILENO);
+				close(parse_sort[i][0]);
+				close(sort_merge[i][1]);
+				who_am_i = 20+i*10;
+			}
+			
+		}
+	}
+
+	// fork suppresser
+
+	if (getpid() == parent_pc){
+		sup_pc = fork();
+		if (sup_pc == 0){
+			//suppresser: close write end of sort_merge
+				close(sort_merge[0][1]);
+				close(sort_merge[1][1]);
+				close(parse_sort[0][0]);
+				close(parse_sort[0][1]);
+				close(parse_sort[1][0]);
+				close(parse_sort[1][1]);
+				who_am_i = SUR_PC;
+		}
+	
+	}
+
+	// define job for each process
+
+	switch (who_am_i){
+	
+		case PAR_PC:
+			// I am preprocessor
+
+			for(i=0;i<2;i++) {
+	 			close(parse_sort[i][0]);
+	 			raw_flow[i] = fdopen(parse_sort[i][1],"w");
+			}
+			int wordct = 0;
+			char * word = malloc(32*sizeof(char));
+			char letter;
+			int writeflag = 0;
+			while (letter = fgetc(stdin)) {
+				
+				if (feof(stdin)) break;
+				if (wordct <31) wordct ++;
+				if (isalpha(letter)){
+					if (wordct <= 30){
+						word[wordct-1] = tolower(letter);
+					}
+
+				} else {
+					word[wordct-1] = '\n';
+					word[wordct]=NULL;
+					if (wordct > 3 ){
+						//write
+						fputs(word,raw_flow[writeflag]);
+						writeflag = 1-writeflag;
+						//fprintf(stderr,"%s\n",word);
+					}
+					wordct = 0;
+					word = malloc(32*sizeof(char));
+
+				}
+
+			}
+			fclose(raw_flow[0]);
+			fclose(raw_flow[1]);
+			close(parse_sort[1][1]);
+			close(parse_sort[0][1]);
+			
+			fprintf(stderr,"%s\n","parsing done");
+		waitpid(sup_pc,NULL,1);
+		sleep(5);
+		break;
+		case SOR2_PC:
+			// I am sorter #2
+			close(sort_merge[0][1]);
+			close(sort_merge[0][0]);
+			close(parse_sort[0][1]);
+			close(parse_sort[0][0]);
+		case SOR1_PC:
+			// I am sorter #1
+			execl("/bin/sort", "sort", (char*)NULL); 
+			
+		exit(0);
+
+		case SUR_PC:
+			// I am suppressor
+
+			for(i=0;i<2;i++) {
+	 			sorted_flow[i] = fdopen(sort_merge[i][0],"r");
+			}
+			char* word0 = malloc(32*sizeof(char));
+			char* word1 = malloc(32*sizeof(char));
+			char* p_word = malloc(32*sizeof(char));
+			int p0_clear =1;
+			int p1_clear =1;
+			int p0_Neof = 1;
+ 			int p1_Neof = 1;
+			int count = 0;
+			int delay = 0;
+			int getnum = 0;
+
+			
+			while(1){
+				// if both eof break
+				
+				//printf("p:%s0:%s1:%s",p_word,word0,word1);					
+	
+				if (!(p0_Neof || p1_Neof)){
+					delay ++;
+
+					if (delay>3) exit(0);
+				}
+				
+		
+				// if word cleared read a new word
+				if (p0_Neof && p0_clear){
+					//printf("%s\n","bb3");		
+					p0_clear = 0;
+					word0 = malloc(32*sizeof(char));
+					if((getnum=fgets(word0,32,sorted_flow[0]))==0) {
+						p0_Neof=0;
+						p0_clear = 1;
+						word0[0] = NULL;
+						
+					}
+					word0[getnum-1] = NULL;
+					
+				
+				}
+
+				//printf("%s\n","cc");
+
+				// if word cleared read a new word
+				if (p1_Neof && p1_clear){
+					p1_clear = 0;
+					word1 = malloc(32*sizeof(char));
+					if((fgets(word1,32,sorted_flow[1]))==0) {
+						p1_Neof=0;
+						p1_clear = 1;
+						word1[0] = NULL;
+					}
+									word0[getnum-1] = NULL;
+					
+				
+				}
+
+				//printf("%s\n","cc");
+
+				// if word cleared read a new word
+				if (p1_Neof && p1_clear){
+					p1_clear = 0;
+					word1 = malloc(32*sizeof(char));
+					if((fgets(word1,32,sorted_flow[1]))==0) {
+						p1_Neof=0;
+						p1_clear = 1;
+						word1[0] = NULL;
+					}
+						
+
+				}
+				
+				/*
+				if ((word0 == NULL)&&(word1==NULL)) {
+					exit(0);
+				}
+				*/
+
+				// if p_word is null assign one
+				if (p_word[0] == NULL ) {
+					count = 0;
+					p_word = malloc(32*sizeof(char));
+					if (word0[0] == NULL){
+						
+						strcpy(p_word,word1);
+						p1_clear = 1;
+						count ++;
+					} else if (word1[0] == NULL){
+						
+						strcpy(p_word,word0);
+						p0_clear = 1;
+						count ++;
+
+					
+
+					} else if (strcmp(word0,word1)<=0){
+						strcpy(p_word,word0);
+						p0_clear = 1;
+						count ++;
+						
+					} else {
+						strcpy(p_word,word1);
+						p1_clear = 1;
+						count ++;
+					}
+
+				}
+
+				
+				
+				if (!(strcmp(p_word,word0) || p0_clear)) {
+					p0_clear = 1;
+					count ++;
+				}
+				if (!(strcmp(p_word,word1) || p1_clear)) {
+					p1_clear = 1;
+					count ++;
+				}
+				
+				//printf("p0_clear:%d  p1_clear:%d  p0_Neof:%d  p1_Neof:%d\n",p0_clear,p1_clear,p0_Neof,p1_Neof);
+				if ( ((p1_clear == 0 && p0_clear ==0 )) || ((!p0_Neof)&&(!p1_clear)) ||((!p1_Neof)&&(!p0_clear))||( (!p1_Neof)&&(!p0_Neof)&&(p1_clear)&&(p0_clear)  ) ){
+					if (p_word[0]!= 0) printf("%-30s %d\n",p_word,count);
+
+					count = 0;
+					p_word[0] = NULL;
+
+				}
+
+				
+
+
+			}
+			
+
+		exit(0);
+		default:
+			//Err...Go die...
+		exit(-1);
+		
+
+	}	
+	
+
+
+
+
+
+
+
+}

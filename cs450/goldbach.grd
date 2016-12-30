@@ -1,0 +1,5 @@
+Grade:
+93	
+Notes:
+not finding solutions where i==k-i, 
+not storing previous segment pointer from whichseg

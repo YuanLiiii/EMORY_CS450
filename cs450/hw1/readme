@@ -1,0 +1,5 @@
+compile: gcc -o goldbach goldbach.c
+
+run: ./goldbach {int N: max number to find}
+
+	input: even numbers <= N

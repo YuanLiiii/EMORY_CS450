@@ -1,0 +1,154 @@
+// HW4 - manage
+
+//THIS CODE IS MY OWN WORK, IT WAS WRITTEN WITHOUT CONSULTING A TUTOR OR CODE WRITTEN BY OTHER STUDENTS - YIYANG ZHAO
+
+#include "shmhw.h"
+extern int errno;
+
+int shm_id;
+st_shmem *sh_mem;
+
+int msgq_id;
+
+//Handler for quitting all process
+void shutdown(int signum){
+	printf("shutdown");
+	int i;
+	//kill all compute
+
+	for (i=0;i<20;i++){
+		if (sh_mem->process[i].pid != 0) kill(sh_mem->process[i].pid,SIGINT);
+	}
+	sleep(5);
+	
+	//printf("killing");
+	int aa = shmdt(sh_mem);
+	shmctl(shm_id,IPC_RMID,NULL);
+	int bb = msgctl(msgq_id,IPC_RMID,NULL);
+	//printf("Destructing shm %d / msgq %d \n",aa,bb);
+	exit(0);
+}
+
+
+
+void initialize_shm(){
+	int i;
+	for(i=0;i<20000;i++){
+		sh_mem->bitmap[i]=0;
+	}
+
+	for(i=0;i<20;i++){
+		 sh_mem->process[i].pid = 0;
+		 sh_mem->process[i].num_perfect_found = 0;
+		 sh_mem->process[i].num_tested = 0;
+		 sh_mem->process[i].num_ntested = 0;
+		 
+	}
+
+	for(i=0;i<20;i++){
+		 sh_mem->perfectnum[i] = 0;
+	}
+
+	sh_mem->num_perfect_found = 0;
+	sh_mem->manage_pid = getpid();
+	//printf("Initialized; add=%d\n", sh_mem);
+
+}
+
+int main(int argc, char *argv[]){
+
+	//creat a shared memory
+	
+
+	
+	shm_id = shmget(MEMKEY, sizeof(st_shmem),IPC_CREAT|IPC_EXCL|0666);
+	sh_mem = shmat(shm_id,NULL,0);
+
+	if (shm_id  == -1){
+		perror("Error shmget: shmget failed to allocate shared memory; check if another manage is using the same ");		
+		exit(-1);
+	} 
+
+	
+
+	//sh_mem->bitmap[1]=0;
+	//initialize shared memory
+	initialize_shm();
+
+	//handle signal
+	struct sigaction action;
+	action.sa_handler = shutdown;
+	sigaction(SIGINT, &action, NULL);
+	sigaction(SIGQUIT, &action, NULL);
+	sigaction(SIGHUP, &action, NULL);
+
+	//set up msg queue
+	msgq_id = msgget(MSGKEY,IPC_CREAT|0666);
+	st_message *message;
+
+	//msg handler
+	int errornum;
+	int j;
+	int p_tmp;
+	
+	while(1){
+		message = malloc(sizeof(st_message));	
+		int sz = msgrcv(msgq_id, message, sizeof(message->param),-3,0);
+		printf("MSG RCVD type:%ld   MSG=:%d  SIZE %d\n",message->type,message->param,sz);
+
+
+
+		int j;
+		int flag = 0;
+		switch (message->type){
+			case 1 :
+			printf("case1\n" );
+				p_tmp = -1;
+				for (j =0; j<20; j++){
+					if (sh_mem->process[j].pid == 0){
+						sh_mem->process[j].pid = message->param;
+						p_tmp = j;
+						break;
+					}
+				}
+				message->type = MSG_INDEX;
+				message->param = p_tmp;
+				msgsnd(msgq_id,message,sizeof(message->param),0);				
+		
+				break;
+
+			case 2 :
+			printf("case1\n" );
+				flag = 0;
+				for (j=0;j<20;j++){
+					if (sh_mem->perfectnum[j] == message->param){
+						
+						flag = 1;
+						break;
+					}
+
+				}
+				if (!flag){
+					if (sh_mem->num_perfect_found >=20){
+						perror("Too much ");
+						sh_mem->num_perfect_found --;
+					}
+					sh_mem->perfectnum[sh_mem->num_perfect_found] = message->param;
+					sh_mem->num_perfect_found ++;
+				}
+				break;
+
+			default : break;
+
+
+
+		}
+
+
+
+
+	}
+	
+
+
+}
