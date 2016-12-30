@@ -8,9 +8,9 @@ All program written in C.
 
 Taught by Prof. Ken Mandelburg
 
-#WARNING:
+WARNING:
 
-#DO NOT COPY THE CODE AND SUBMIT AS YOUR OWN WORK!  CONSULT YOUR HONOR CODE#
+DO NOT COPY THE CODE AND SUBMIT AS YOUR OWN WORK!  CONSULT YOUR HONOR CODE#
 
 #Proj 1: Goldbach [using bitarray]
 
